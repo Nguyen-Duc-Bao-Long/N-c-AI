@@ -1,0 +1,11 @@
+{
+  "extends": "@electron-toolkit/tsconfig/tsconfig.web.json",
+
+  "compilerOptions": {
+    "paths": {
+      "@renderer/*": [
+        "./src/renderer/src/*"
+      ]
+    }
+  }
+}

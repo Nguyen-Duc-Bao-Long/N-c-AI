@@ -1,0 +1,36 @@
+<!doctype html>
+
+<html>
+  <head>
+    <meta charset="UTF-8" />
+
+    <title>AI Desktop Character</title>
+
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="
+        default-src 'self';
+        script-src 'self';
+        style-src 'self' 'unsafe-inline';
+        connect-src 'self' live2d-model:;
+        img-src 'self' data: blob: live2d-model:;
+      "
+    />
+  </head>
+
+  <body>
+    <div id="app"></div>
+
+    <!-- Live2D Cubism Core -->
+    <script
+      vite-ignore
+      src="./assets/js/CubismSdkForWeb-5-r.3/Core/live2dcubismcore.min.js"
+    ></script>
+
+    <!-- Vue / Electron renderer -->
+    <script
+      type="module"
+      src="/src/main.ts"
+    ></script>
+  </body>
+</html>
