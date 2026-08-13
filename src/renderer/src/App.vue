@@ -67,43 +67,104 @@ type CharacterDragState = {
 }
 
 
+type CharacterResizeCorner =
+  | 'nw'
+  | 'ne'
+  | 'sw'
+  | 'se'
+
+
+type CharacterResizeState = {
+  pointerId: number
+
+  corner:
+    CharacterResizeCorner
+
+  fixedX: number
+  fixedY: number
+
+  startDistance: number
+
+  startWidth: number
+  startHeight: number
+
+  element: HTMLElement
+}
+
+
 /*
   ============================================================
-  CHARACTER VIEWPORT
+  CHARACTER SIZE
   ============================================================
 
-  Live2D vẫn nằm trong một vùng
-  500 x 700 giống BrowserWindow cũ.
+  Đây là viewport chứa Live2D.
 
-  Nhưng BrowserWindow thật bây giờ
-  phủ toàn màn hình và KHÔNG di chuyển.
+  BrowserWindow thật phủ toàn màn hình
+  và KHÔNG di chuyển.
 
-  Khi user kéo:
-  chỉ div character-shell di chuyển.
+  Chỉ character-shell này di chuyển
+  và resize.
 */
 
-const CHARACTER_VIEW_WIDTH =
+const DEFAULT_CHARACTER_WIDTH =
   500
 
 
-const CHARACTER_VIEW_HEIGHT =
+const DEFAULT_CHARACTER_HEIGHT =
   700
 
 
 /*
-  Giữ lại ít nhất 40px character-shell
-  trên màn hình để không kéo mất hoàn toàn.
+  Giữ đúng tỉ lệ 500 : 700.
 
-  Muốn cho phép kéo xa hơn:
-  giảm xuống 20, 10 hoặc 1.
+  Model sẽ không bị kéo méo.
+*/
+const CHARACTER_ASPECT_RATIO =
+  DEFAULT_CHARACTER_WIDTH /
+  DEFAULT_CHARACTER_HEIGHT
+
+
+/*
+  Giới hạn resize.
+
+  Muốn to hơn nữa sau này:
+  chỉ cần tăng MAX_CHARACTER_WIDTH.
+*/
+const MIN_CHARACTER_WIDTH =
+  260
+
+
+const MAX_CHARACTER_WIDTH =
+  1200
+
+
+const characterWidth =
+  ref(
+    DEFAULT_CHARACTER_WIDTH
+  )
+
+
+const characterHeight =
+  ref(
+    DEFAULT_CHARACTER_HEIGHT
+  )
+
+
+/*
+  Luôn giữ ít nhất 40px
+  character-shell trên màn hình.
+
+  Có thể giảm xuống 10 hoặc 1
+  nếu muốn kéo gần mất hẳn.
 */
 const MIN_VISIBLE_PIXELS =
   40
 
 
 /*
-  Vị trí character-shell
-  trong BrowserWindow full-screen.
+  ============================================================
+  CHARACTER POSITION
+  ============================================================
 */
 
 const characterX =
@@ -122,10 +183,10 @@ const characterShellStyle =
   computed(
     () => ({
       width:
-        `${CHARACTER_VIEW_WIDTH}px`,
+        `${characterWidth.value}px`,
 
       height:
-        `${CHARACTER_VIEW_HEIGHT}px`,
+        `${characterHeight.value}px`,
 
       transform:
         `translate3d(${characterX.value}px, ${characterY.value}px, 0)`
@@ -134,14 +195,9 @@ const characterShellStyle =
 
 
 /*
-  Live2DStage cần biết
-  character-shell đang nằm ở đâu.
-
-  Nó dùng offset này để convert:
-
-  cursor full-screen
-        ↓
-  cursor local 500x700
+  Live2DStage dùng offset này
+  để convert cursor full-screen
+  sang cursor local.
 */
 
 const stageOffset =
@@ -158,7 +214,7 @@ const stageOffset =
 
 /*
   ============================================================
-  GENERAL HELPERS
+  HELPERS
   ============================================================
 */
 
@@ -177,32 +233,17 @@ function clamp(
 }
 
 
-/*
-  ============================================================
-  CHARACTER POSITION LIMIT
-  ============================================================
-
-  Cho phép character-shell đi ra
-  ngoài màn hình.
-
-  Ví dụ:
-
-  y = -200
-
-  nghĩa là 200px phía trên
-  character-shell bị che bởi
-  mép màn hình.
-*/
-
-function clampCharacterPosition(
+function clampCharacterPositionForSize(
   x: number,
-  y: number
+  y: number,
+  width: number,
+  height: number
 ): {
   x: number
   y: number
 } {
   const minX =
-    -CHARACTER_VIEW_WIDTH +
+    -width +
     MIN_VISIBLE_PIXELS
 
 
@@ -212,7 +253,7 @@ function clampCharacterPosition(
 
 
   const minY =
-    -CHARACTER_VIEW_HEIGHT +
+    -height +
     MIN_VISIBLE_PIXELS
 
 
@@ -239,8 +280,24 @@ function clampCharacterPosition(
 }
 
 
+function clampCharacterPosition(
+  x: number,
+  y: number
+): {
+  x: number
+  y: number
+} {
+  return clampCharacterPositionForSize(
+    x,
+    y,
+    characterWidth.value,
+    characterHeight.value
+  )
+}
+
+
 /*
-  Vị trí mặc định:
+  Mặc định:
   gần góc dưới-phải màn hình.
 */
 
@@ -249,11 +306,11 @@ function initializeCharacterPosition():
   const position =
     clampCharacterPosition(
       window.innerWidth -
-        CHARACTER_VIEW_WIDTH -
+        characterWidth.value -
         24,
 
       window.innerHeight -
-        CHARACTER_VIEW_HEIGHT -
+        characterHeight.value -
         24
     )
 
@@ -266,12 +323,6 @@ function initializeCharacterPosition():
     position.y
 }
 
-
-/*
-  Nếu resolution / kích thước window
-  thay đổi thì đảm bảo character
-  không mất hoàn toàn khỏi viewport.
-*/
 
 function handleWindowResize():
   void {
@@ -319,21 +370,13 @@ const availableModels =
   )
 
 
-/*
-  ============================================================
-  DELETABLE MODELS
-  ============================================================
-*/
-
 const deletableModelIds =
   computed<string[]>(
     () =>
       importedModels
         .value
         .map(
-          (
-            model
-          ) =>
+          model =>
             model.id
         )
   )
@@ -364,9 +407,7 @@ const currentCharacter =
         availableModels
           .value
           .find(
-            (
-              item
-            ) =>
+            item =>
               item.id ===
               currentCharacterId.value
           )
@@ -381,12 +422,6 @@ const currentCharacter =
     }
   )
 
-
-/*
-  ============================================================
-  LOAD IMPORTED MODELS
-  ============================================================
-*/
 
 async function loadImportedModels():
   Promise<void> {
@@ -464,14 +499,6 @@ function handleModelBounds(
   ============================================================
   CONTROL POSITION
   ============================================================
-
-  QUAN TRỌNG:
-
-  modelBounds là tọa độ LOCAL
-  trong character-shell 500x700.
-
-  Vì vậy KHÔNG dùng window.innerWidth
-  để tính vị trí controls nữa.
 */
 
 const reactionControlStyle =
@@ -481,9 +508,7 @@ const reactionControlStyle =
         modelBounds.value
 
 
-      if (
-        !bounds
-      ) {
+      if (!bounds) {
         return {
           left:
             '325px',
@@ -511,7 +536,7 @@ const reactionControlStyle =
       let top =
         bounds.y +
         bounds.height *
-          0.30
+        0.30
 
 
       /*
@@ -522,7 +547,7 @@ const reactionControlStyle =
       if (
         left +
           controlWidth >
-        CHARACTER_VIEW_WIDTH
+        characterWidth.value
       ) {
         left =
           bounds.x -
@@ -531,12 +556,27 @@ const reactionControlStyle =
       }
 
 
+      const maxLeft =
+        Math.max(
+          8,
+          characterWidth.value -
+            controlWidth
+        )
+
+
+      const maxTop =
+        Math.max(
+          8,
+          characterHeight.value -
+            150
+        )
+
+
       left =
         clamp(
           left,
           8,
-          CHARACTER_VIEW_WIDTH -
-            controlWidth
+          maxLeft
         )
 
 
@@ -544,8 +584,7 @@ const reactionControlStyle =
         clamp(
           top,
           8,
-          CHARACTER_VIEW_HEIGHT -
-            150
+          maxTop
         )
 
 
@@ -577,9 +616,7 @@ const modelPickerStyle =
         290
 
 
-      if (
-        !bounds
-      ) {
+      if (!bounds) {
         return {
           left:
             '10px',
@@ -600,15 +637,10 @@ const modelPickerStyle =
         gap
 
 
-      /*
-        Không đủ chỗ phải
-        → chuyển sang trái.
-      */
-
       if (
         left +
           panelWidth >
-        CHARACTER_VIEW_WIDTH
+        characterWidth.value
       ) {
         left =
           bounds.x -
@@ -617,28 +649,42 @@ const modelPickerStyle =
       }
 
 
+      const maxLeft =
+        Math.max(
+          8,
+          characterWidth.value -
+            panelWidth -
+            8
+        )
+
+
       left =
         clamp(
           left,
           8,
-          CHARACTER_VIEW_WIDTH -
-            panelWidth -
-            8
+          maxLeft
         )
 
 
       let top =
         bounds.y +
         bounds.height *
-          0.10
+        0.10
+
+
+      const maxTop =
+        Math.max(
+          8,
+          characterHeight.value -
+            450
+        )
 
 
       top =
         clamp(
           top,
           8,
-          CHARACTER_VIEW_HEIGHT -
-            450
+          maxTop
         )
 
 
@@ -689,6 +735,31 @@ const modelImporting =
   )
 
 
+const isCharacterResizing =
+  ref(
+    false
+  )
+
+
+/*
+  Frame đỏ hiện giống controls.
+
+  Khi Reaction/Models mở:
+  ẩn frame để UI sạch hơn.
+*/
+
+const characterFrameVisible =
+  computed(
+    () =>
+      (
+        controlsVisible.value &&
+        !reactionWheelOpen.value &&
+        !modelPickerOpen.value
+      ) ||
+      isCharacterResizing.value
+  )
+
+
 let hideControlsTimer:
   number | null =
     null
@@ -714,12 +785,6 @@ function clearHideTimer():
 }
 
 
-/*
-  ============================================================
-  MODEL HOVER
-  ============================================================
-*/
-
 function handleModelHover(
   hovered: boolean
 ): void {
@@ -740,7 +805,12 @@ function handleModelHover(
   }
 
 
+  /*
+    Trong lúc resize không ẩn frame.
+  */
+
   if (
+    isCharacterResizing.value ||
     reactionWheelOpen.value ||
     modelPickerOpen.value
   ) {
@@ -753,6 +823,7 @@ function handleModelHover(
       () => {
         if (
           isModelHovered.value ||
+          isCharacterResizing.value ||
           reactionWheelOpen.value ||
           modelPickerOpen.value
         ) {
@@ -782,7 +853,8 @@ function keepControlsVisible():
 function scheduleControlsHide():
   void {
   if (
-    isModelHovered.value
+    isModelHovered.value ||
+    isCharacterResizing.value
   ) {
     controlsVisible.value =
       true
@@ -807,6 +879,7 @@ function scheduleControlsHide():
       () => {
         if (
           isModelHovered.value ||
+          isCharacterResizing.value ||
           reactionWheelOpen.value ||
           modelPickerOpen.value
         ) {
@@ -960,12 +1033,6 @@ function closeModelPicker():
 }
 
 
-/*
-  ============================================================
-  SELECT MODEL
-  ============================================================
-*/
-
 function selectModel(
   selectedModel:
     CharacterConfig
@@ -1029,13 +1096,7 @@ async function importModel():
         .importModel()
 
 
-    /*
-      User Cancel.
-    */
-
-    if (
-      !imported
-    ) {
+    if (!imported) {
       return
     }
 
@@ -1050,17 +1111,13 @@ async function importModel():
       importedModels
         .value
         .some(
-          (
-            item
-          ) =>
+          item =>
             item.id ===
             imported.id
         )
 
 
-    if (
-      !exists
-    ) {
+    if (!exists) {
       importedModels
         .value
         .push(
@@ -1104,32 +1161,23 @@ async function importModel():
 */
 
 async function deleteModel(
-  model:
+  targetModel:
     CharacterConfig
 ): Promise<void> {
   const importedModel =
     importedModels
       .value
       .find(
-        (
-          item
-        ) =>
+        item =>
           item.id ===
-          model.id
+          targetModel.id
       )
 
 
-  /*
-    Built-in model
-    không được xóa.
-  */
-
-  if (
-    !importedModel
-  ) {
+  if (!importedModel) {
     console.warn(
       '[Models] Cannot delete built-in model:',
-      model.id
+      targetModel.id
     )
 
     return
@@ -1145,41 +1193,30 @@ async function deleteModel(
 
 
   deletingModelId.value =
-    model.id
+    targetModel.id
 
 
   try {
     const deleted =
       await window.api
         .deleteModel(
-          model.id
+          targetModel.id
         )
 
 
-    /*
-      User Cancel.
-    */
-
-    if (
-      !deleted
-    ) {
+    if (!deleted) {
       console.log(
         '[Models] Delete cancelled:',
-        model.name
+        targetModel.name
       )
 
       return
     }
 
 
-    /*
-      Nếu xóa model đang dùng
-      → trở về Akari.
-    */
-
     if (
       currentCharacterId.value ===
-      model.id
+      targetModel.id
     ) {
       reactionWheelOpen.value =
         false
@@ -1198,11 +1235,9 @@ async function deleteModel(
       importedModels
         .value
         .filter(
-          (
-            item
-          ) =>
+          item =>
             item.id !==
-            model.id
+            targetModel.id
         )
 
 
@@ -1216,7 +1251,7 @@ async function deleteModel(
 
     console.log(
       '[Models] Deleted from UI:',
-      model.name
+      targetModel.name
     )
   }
   catch (error) {
@@ -1234,13 +1269,8 @@ async function deleteModel(
 
 /*
   ============================================================
-  CHARACTER DRAG ZONE SETTINGS
+  CHARACTER DRAG ZONE
   ============================================================
-
-  Đây là vùng nhỏ trên thân
-  dùng để kéo character-shell.
-
-  KHÔNG kéo BrowserWindow.
 */
 
 const MODEL_DRAG_ZONE_WIDTH_RATIO =
@@ -1251,17 +1281,9 @@ const MODEL_DRAG_ZONE_HEIGHT_RATIO =
   0.30
 
 
-/*
-  28% từ đỉnh model.
-*/
-
 const MODEL_DRAG_ZONE_TOP_RATIO =
   0.28
 
-
-/*
-  Min / max vùng kéo.
-*/
 
 const MODEL_DRAG_ZONE_MIN_WIDTH =
   55
@@ -1279,12 +1301,6 @@ const MODEL_DRAG_ZONE_MAX_HEIGHT =
   155
 
 
-/*
-  ============================================================
-  DRAG ZONE POSITION
-  ============================================================
-*/
-
 const modelDragZoneStyle =
   computed(
     () => {
@@ -1294,10 +1310,8 @@ const modelDragZoneStyle =
 
       if (
         !bounds ||
-        bounds.width <=
-          0 ||
-        bounds.height <=
-          0
+        bounds.width <= 0 ||
+        bounds.height <= 0
       ) {
         return {
           display:
@@ -1305,10 +1319,6 @@ const modelDragZoneStyle =
         }
       }
 
-
-      /*
-        Width.
-      */
 
       const width =
         Math.min(
@@ -1325,10 +1335,6 @@ const modelDragZoneStyle =
         )
 
 
-      /*
-        Height.
-      */
-
       const height =
         Math.min(
           bounds.height,
@@ -1344,10 +1350,6 @@ const modelDragZoneStyle =
         )
 
 
-      /*
-        Căn giữa ngang.
-      */
-
       const left =
         bounds.x +
         (
@@ -1356,10 +1358,6 @@ const modelDragZoneStyle =
         ) /
         2
 
-
-      /*
-        Đặt ở phần thân model.
-      */
 
       const desiredTop =
         bounds.y +
@@ -1403,18 +1401,8 @@ const modelDragZoneStyle =
 
 /*
   ============================================================
-  CHARACTER DRAG
+  DRAG STATE
   ============================================================
-
-  Đây là thay đổi quan trọng.
-
-  BrowserWindow:
-    KHÔNG DI CHUYỂN.
-
-  character-shell:
-    translate3d(x, y, 0)
-
-  → tránh flicker transparent WebGL.
 */
 
 let characterDrag:
@@ -1422,9 +1410,10 @@ let characterDrag:
     null
 
 
-/*
-  Position chờ apply ở frame tiếp theo.
-*/
+let characterResize:
+  CharacterResizeState | null =
+    null
+
 
 let pendingCharacterPosition:
   {
@@ -1438,10 +1427,6 @@ let characterDragFrame:
   number | null =
     null
 
-
-/*
-  Apply position đúng 1 lần/frame.
-*/
 
 function flushCharacterDrag():
   void {
@@ -1476,14 +1461,6 @@ function flushCharacterDrag():
 }
 
 
-/*
-  Queue vị trí mới.
-
-  requestAnimationFrame giúp
-  drag mượt và tránh Vue update
-  quá nhiều lần trong một frame.
-*/
-
 function queueCharacterPosition(
   x: number,
   y: number
@@ -1511,17 +1488,13 @@ function queueCharacterPosition(
 
 /*
   ============================================================
-  DRAG START
+  CHARACTER DRAG START
   ============================================================
 */
 
 function startCharacterDrag(
   event: PointerEvent
 ): void {
-  /*
-    Chỉ chuột trái.
-  */
-
   if (
     event.button !==
     0
@@ -1539,11 +1512,13 @@ function startCharacterDrag(
 
 
   /*
-    Không start lần nữa.
+    Không cho move và resize
+    chạy cùng lúc.
   */
 
   if (
-    characterDrag
+    characterDrag ||
+    characterResize
   ) {
     return
   }
@@ -1577,11 +1552,6 @@ function startCharacterDrag(
   }
 
 
-  /*
-    Trong khi drag,
-    BrowserWindow phải nhận mouse.
-  */
-
   applyIgnoreMouseState(
     false
   )
@@ -1594,45 +1564,37 @@ function startCharacterDrag(
   }
   catch {
     /*
-      Không nghiêm trọng.
+      Ignore.
     */
   }
-
-
-  console.log(
-    '[CharacterDrag] Started'
-  )
 }
 
 
 /*
   ============================================================
-  DRAG MOVE
+  CHARACTER DRAG MOVE
   ============================================================
 */
 
 function moveCharacterDrag(
   event: PointerEvent
 ): void {
-  if (
-    !characterDrag
-  ) {
+  const drag =
+    characterDrag
+
+
+  if (!drag) {
     return
   }
 
 
   if (
     event.pointerId !==
-    characterDrag.pointerId
+    drag.pointerId
   ) {
     return
   }
 
-
-  /*
-    Nếu chuột trái không còn giữ
-    → kết thúc drag.
-  */
 
   if (
     (
@@ -1653,44 +1615,29 @@ function moveCharacterDrag(
   event.stopPropagation()
 
 
-  /*
-    clientX/clientY là tọa độ
-    trong BrowserWindow full-screen.
-
-    BrowserWindow đứng yên
-    nên delta này rất ổn định.
-  */
-
   const deltaX =
     event.clientX -
-    characterDrag.startPointerX
+    drag.startPointerX
 
 
   const deltaY =
     event.clientY -
-    characterDrag.startPointerY
-
-
-  const nextX =
-    characterDrag.startCharacterX +
-    deltaX
-
-
-  const nextY =
-    characterDrag.startCharacterY +
-    deltaY
+    drag.startPointerY
 
 
   queueCharacterPosition(
-    nextX,
-    nextY
+    drag.startCharacterX +
+      deltaX,
+
+    drag.startCharacterY +
+      deltaY
   )
 }
 
 
 /*
   ============================================================
-  DRAG END
+  CHARACTER DRAG END
   ============================================================
 */
 
@@ -1698,9 +1645,11 @@ function stopCharacterDrag(
   event?:
     PointerEvent
 ): void {
-  if (
-    !characterDrag
-  ) {
+  const drag =
+    characterDrag
+
+
+  if (!drag) {
     return
   }
 
@@ -1708,7 +1657,7 @@ function stopCharacterDrag(
   if (
     event &&
     event.pointerId !==
-      characterDrag.pointerId
+      drag.pointerId
   ) {
     return
   }
@@ -1721,10 +1670,6 @@ function stopCharacterDrag(
     event.stopPropagation()
   }
 
-
-  /*
-    Apply position cuối ngay lập tức.
-  */
 
   if (
     characterDragFrame !==
@@ -1743,26 +1688,20 @@ function stopCharacterDrag(
   flushCharacterDrag()
 
 
-  const dragState =
-    characterDrag
-
-
   characterDrag =
     null
 
 
   try {
     if (
-      dragState
-        .element
+      drag.element
         .hasPointerCapture(
-          dragState.pointerId
+          drag.pointerId
         )
     ) {
-      dragState
-        .element
+      drag.element
         .releasePointerCapture(
-          dragState.pointerId
+          drag.pointerId
         )
     }
   }
@@ -1773,22 +1712,528 @@ function stopCharacterDrag(
   }
 
 
-  console.log(
-    '[CharacterDrag] Finished:',
-    {
-      x:
-        characterX.value,
+  void syncMousePassthrough()
+}
 
-      y:
-        characterY.value
-    }
-  )
+
+/*
+  ============================================================
+  RENDERER RESIZE EVENT
+  ============================================================
+
+  character-shell thay đổi size,
+  báo cho Pixi resize plugin và
+  Live2DStage biết viewport đã đổi.
+
+  BrowserWindow vẫn KHÔNG resize.
+*/
+
+let rendererResizeEventFrame:
+  number | null =
+    null
+
+
+function scheduleRendererResizeEvent():
+  void {
+  if (
+    rendererResizeEventFrame !==
+    null
+  ) {
+    return
+  }
+
+
+  rendererResizeEventFrame =
+    window.requestAnimationFrame(
+      () => {
+        rendererResizeEventFrame =
+          null
+
+
+        window.dispatchEvent(
+          new Event(
+            'resize'
+          )
+        )
+      }
+    )
+}
+
+
+/*
+  ============================================================
+  CHARACTER FRAME RESIZE START
+  ============================================================
+*/
+
+function startCharacterResize(
+  event: PointerEvent,
+  corner: CharacterResizeCorner
+): void {
+  if (
+    event.button !==
+    0
+  ) {
+    return
+  }
+
+
+  if (
+    characterResize ||
+    characterDrag
+  ) {
+    return
+  }
+
+
+  event.preventDefault()
+  event.stopPropagation()
+
+
+  clearHideTimer()
+
+
+  controlsVisible.value =
+    true
+
+
+  const startX =
+    characterX.value
+
+
+  const startY =
+    characterY.value
+
+
+  const startWidth =
+    characterWidth.value
+
+
+  const startHeight =
+    characterHeight.value
 
 
   /*
-    Sau khi thả chuột,
-    kiểm tra lại click-through.
+    fixedX/Y = góc đối diện
+    không di chuyển.
   */
+
+  let fixedX =
+    startX
+
+
+  let fixedY =
+    startY
+
+
+  switch (
+    corner
+  ) {
+    /*
+      Bottom-right:
+      giữ top-left.
+    */
+
+    case 'se':
+      fixedX =
+        startX
+
+      fixedY =
+        startY
+
+      break
+
+
+    /*
+      Bottom-left:
+      giữ top-right.
+    */
+
+    case 'sw':
+      fixedX =
+        startX +
+        startWidth
+
+      fixedY =
+        startY
+
+      break
+
+
+    /*
+      Top-right:
+      giữ bottom-left.
+    */
+
+    case 'ne':
+      fixedX =
+        startX
+
+      fixedY =
+        startY +
+        startHeight
+
+      break
+
+
+    /*
+      Top-left:
+      giữ bottom-right.
+    */
+
+    case 'nw':
+      fixedX =
+        startX +
+        startWidth
+
+      fixedY =
+        startY +
+        startHeight
+
+      break
+  }
+
+
+  const startDistance =
+    Math.hypot(
+      event.clientX -
+        fixedX,
+
+      event.clientY -
+        fixedY
+    )
+
+
+  if (
+    !Number.isFinite(
+      startDistance
+    ) ||
+    startDistance <=
+      1
+  ) {
+    return
+  }
+
+
+  const element =
+    event.currentTarget as HTMLElement
+
+
+  characterResize = {
+    pointerId:
+      event.pointerId,
+
+    corner,
+
+    fixedX,
+
+    fixedY,
+
+    startDistance,
+
+    startWidth,
+
+    startHeight,
+
+    element
+  }
+
+
+  isCharacterResizing.value =
+    true
+
+
+  applyIgnoreMouseState(
+    false
+  )
+
+
+  try {
+    element.setPointerCapture(
+      event.pointerId
+    )
+  }
+  catch {
+    /*
+      Ignore.
+    */
+  }
+}
+
+
+/*
+  ============================================================
+  CHARACTER FRAME RESIZE MOVE
+  ============================================================
+*/
+
+function moveCharacterResize(
+  event: PointerEvent
+): void {
+  const resize =
+    characterResize
+
+
+  if (!resize) {
+    return
+  }
+
+
+  if (
+    event.pointerId !==
+    resize.pointerId
+  ) {
+    return
+  }
+
+
+  if (
+    (
+      event.buttons &
+      1
+    ) ===
+    0
+  ) {
+    stopCharacterResize(
+      event
+    )
+
+    return
+  }
+
+
+  event.preventDefault()
+  event.stopPropagation()
+
+
+  const currentDistance =
+    Math.hypot(
+      event.clientX -
+        resize.fixedX,
+
+      event.clientY -
+        resize.fixedY
+    )
+
+
+  if (
+    !Number.isFinite(
+      currentDistance
+    )
+  ) {
+    return
+  }
+
+
+  const requestedRatio =
+    currentDistance /
+    resize.startDistance
+
+
+  const minRatio =
+    MIN_CHARACTER_WIDTH /
+    resize.startWidth
+
+
+  const maxRatio =
+    MAX_CHARACTER_WIDTH /
+    resize.startWidth
+
+
+  const ratio =
+    clamp(
+      requestedRatio,
+      minRatio,
+      maxRatio
+    )
+
+
+  const nextWidth =
+    resize.startWidth *
+    ratio
+
+
+  /*
+    Giữ chính xác aspect ratio.
+  */
+
+  const nextHeight =
+    nextWidth /
+    CHARACTER_ASPECT_RATIO
+
+
+  let nextX =
+    characterX.value
+
+
+  let nextY =
+    characterY.value
+
+
+  /*
+    Tính x/y theo góc đang kéo.
+  */
+
+  switch (
+    resize.corner
+  ) {
+    case 'se':
+      nextX =
+        resize.fixedX
+
+      nextY =
+        resize.fixedY
+
+      break
+
+
+    case 'sw':
+      nextX =
+        resize.fixedX -
+        nextWidth
+
+      nextY =
+        resize.fixedY
+
+      break
+
+
+    case 'ne':
+      nextX =
+        resize.fixedX
+
+      nextY =
+        resize.fixedY -
+        nextHeight
+
+      break
+
+
+    case 'nw':
+      nextX =
+        resize.fixedX -
+        nextWidth
+
+      nextY =
+        resize.fixedY -
+        nextHeight
+
+      break
+  }
+
+
+  const position =
+    clampCharacterPositionForSize(
+      nextX,
+      nextY,
+      nextWidth,
+      nextHeight
+    )
+
+
+  characterWidth.value =
+    nextWidth
+
+
+  characterHeight.value =
+    nextHeight
+
+
+  characterX.value =
+    position.x
+
+
+  characterY.value =
+    position.y
+
+
+  /*
+    Báo cho Pixi:
+    viewport character đã đổi size.
+  */
+
+  scheduleRendererResizeEvent()
+}
+
+
+/*
+  ============================================================
+  CHARACTER FRAME RESIZE END
+  ============================================================
+*/
+
+function stopCharacterResize(
+  event?:
+    PointerEvent
+): void {
+  const resize =
+    characterResize
+
+
+  if (!resize) {
+    return
+  }
+
+
+  if (
+    event &&
+    event.pointerId !==
+      resize.pointerId
+  ) {
+    return
+  }
+
+
+  if (
+    event
+  ) {
+    event.preventDefault()
+    event.stopPropagation()
+  }
+
+
+  try {
+    if (
+      resize.element
+        .hasPointerCapture(
+          resize.pointerId
+        )
+    ) {
+      resize.element
+        .releasePointerCapture(
+          resize.pointerId
+        )
+    }
+  }
+  catch {
+    /*
+      Ignore.
+    */
+  }
+
+
+  characterResize =
+    null
+
+
+  isCharacterResizing.value =
+    false
+
+
+  /*
+    Đảm bảo Pixi nhận size cuối.
+  */
+
+  scheduleRendererResizeEvent()
+
+
+  /*
+    Giữ frame hiện nếu chuột
+    vẫn đang ở vùng character.
+  */
+
+  keepControlsVisible()
+
 
   void syncMousePassthrough()
 }
@@ -1798,22 +2243,7 @@ function stopCharacterDrag(
   ============================================================
   MOUSE PASSTHROUGH
   ============================================================
-
-  Vì BrowserWindow bây giờ
-  phủ toàn màn hình:
-
-  nếu không làm click-through,
-  desktop bên dưới sẽ không click được.
-
-  Logic:
-
-  Cursor ở vùng interactive:
-    ignore = false
-
-  Cursor ở transparent area:
-    ignore = true
 */
-
 
 let mousePassthroughTimer:
   number | null =
@@ -1829,11 +2259,9 @@ let lastIgnoreMouseState:
     null
 
 
-/*
-  Chỉ gửi IPC khi state thực sự đổi.
+let cursorInsideActiveFrame =
+  false
 
-  Không spam IPC 30 lần/giây.
-*/
 
 function applyIgnoreMouseState(
   ignore: boolean
@@ -1859,20 +2287,8 @@ function applyIgnoreMouseState(
 
 /*
   ============================================================
-  DETECT INTERACTIVE DOM
-  ============================================================
-*/
-
-/*
-  ============================================================
   HIT TEST
   ============================================================
-
-  Không dùng elementFromPoint()
-  để quyết định mouse passthrough nữa.
-
-  Ta kiểm tra trực tiếp bounding rect
-  của các vùng interactive.
 */
 
 function pointInsideRect(
@@ -1896,13 +2312,35 @@ function pointInsideRect(
 }
 
 
+function isCursorOverCharacterShell(
+  x: number,
+  y: number
+): boolean {
+  return (
+    x >=
+      characterX.value &&
+
+    x <=
+      characterX.value +
+      characterWidth.value &&
+
+    y >=
+      characterY.value &&
+
+    y <=
+      characterY.value +
+      characterHeight.value
+  )
+}
+
+
 function isCursorOverInteractiveDom(
   x: number,
   y: number
 ): boolean {
   const selectors = [
     '.model-drag-zone',
-    '.model-resize-handle',
+    '.character-resize-handle',
     '.character-controls',
     '.model-picker-container',
     '.reaction-wheel-container',
@@ -1931,10 +2369,6 @@ function isCursorOverInteractiveDom(
       )
 
 
-    /*
-      Element đang hidden
-      thì bỏ qua.
-    */
     if (
       style.display ===
         'none' ||
@@ -1951,10 +2385,8 @@ function isCursorOverInteractiveDom(
 
 
     if (
-      rect.width <=
-        0 ||
-      rect.height <=
-        0
+      rect.width <= 0 ||
+      rect.height <= 0
     ) {
       continue
     }
@@ -1976,17 +2408,6 @@ function isCursorOverInteractiveDom(
 }
 
 
-/*
-  Cho toàn bộ phần model trở thành
-  vùng có thể bật mouse interaction.
-
-  Nhờ vậy khi cursor tới gần:
-  - model
-  - resize handle
-
-  Electron sẽ ngừng click-through
-  trước khi user click.
-*/
 function isCursorOverModelArea(
   x: number,
   y: number
@@ -1995,17 +2416,10 @@ function isCursorOverModelArea(
     modelBounds.value
 
 
-  if (
-    !bounds
-  ) {
+  if (!bounds) {
     return false
   }
 
-
-  /*
-    Convert full-screen coordinate
-    sang local character-shell.
-  */
 
   const localX =
     x -
@@ -2018,13 +2432,12 @@ function isCursorOverModelArea(
 
 
   /*
-    Mở rộng thêm 40px
-    để resize handle nằm ngoài bounds
-    vẫn bắt mouse được.
+    Một chút padding quanh model
+    giúp hover dễ hơn.
   */
 
   const padding =
-    40
+    24
 
 
   return (
@@ -2057,10 +2470,6 @@ function isCursorOverModelArea(
 
 async function syncMousePassthrough():
   Promise<void> {
-  /*
-    Không cho chạy chồng nhiều IPC.
-  */
-
   if (
     mousePassthroughPending
   ) {
@@ -2069,12 +2478,13 @@ async function syncMousePassthrough():
 
 
   /*
-    Đang kéo character:
-    luôn nhận mouse.
+    Khi move/resize:
+    Electron phải luôn nhận mouse.
   */
 
   if (
-    characterDrag
+    characterDrag ||
+    characterResize
   ) {
     applyIgnoreMouseState(
       false
@@ -2089,58 +2499,85 @@ async function syncMousePassthrough():
 
 
   try {
-    /*
-      Cursor relative với
-      BrowserWindow full-screen.
-    */
-
     const cursor =
       await window.api
         .getCursorPosition()
 
 
-    /*
-      document.elementFromPoint()
-      dùng tọa độ viewport CSS.
+    const overModel =
+      isCursorOverModelArea(
+        cursor.x,
+        cursor.y
+      )
 
-      BrowserWindow đứng yên full-screen
-      nên cursor.x/y khớp với viewport.
+
+    const overInteractiveDom =
+      isCursorOverInteractiveDom(
+        cursor.x,
+        cursor.y
+      )
+
+
+    const overCharacterShell =
+      isCursorOverCharacterShell(
+        cursor.x,
+        cursor.y
+      )
+
+
+    /*
+      Frame chỉ xuất hiện khi hover model.
+
+      Nhưng một khi đã xuất hiện,
+      user có thể di chuột từ model
+      ra góc khung mà frame không biến mất.
     */
 
+    const insideActiveFrame =
+      characterFrameVisible.value &&
+      (
+        overCharacterShell ||
+        overInteractiveDom
+      )
+
+
+    if (
+      insideActiveFrame &&
+      !cursorInsideActiveFrame
+    ) {
+      keepControlsVisible()
+    }
+
+
+    if (
+      !insideActiveFrame &&
+      cursorInsideActiveFrame
+    ) {
+      scheduleControlsHide()
+    }
+
+
+    cursorInsideActiveFrame =
+      insideActiveFrame
+
+
     /*
-  Không dựa vào elementFromPoint nữa.
+      Khi frame đang hiện:
+      toàn bộ character-shell
+      là vùng mouse-active.
 
-  Kiểm tra bằng:
-  1. model bounds
-  2. bounding rect DOM controls
-*/
-
-const overModel =
-  isCursorOverModelArea(
-    cursor.x,
-    cursor.y
-  )
-
-
-const overInteractiveDom =
-  isCursorOverInteractiveDom(
-    cursor.x,
-    cursor.y
-  )
-
-
-const interactive =
-  overModel ||
-  overInteractiveDom
-
-
-    /*
-      interactive = true
-        → ignore false.
-
-      interactive = false
-        → ignore true.
+      Nhờ vậy user dễ đi tới
+      4 góc resize.
     */
+
+    const interactive =
+      overModel ||
+      overInteractiveDom ||
+      (
+        characterFrameVisible.value &&
+        overCharacterShell
+      )
+
 
     applyIgnoreMouseState(
       !interactive
@@ -2167,23 +2604,11 @@ const interactive =
 
 onMounted(
   async () => {
-    /*
-      Đặt character ban đầu.
-    */
-
     initializeCharacterPosition()
 
 
-    /*
-      Load imported models.
-    */
-
     await loadImportedModels()
 
-
-    /*
-      Window resize.
-    */
 
     window.addEventListener(
       'resize',
@@ -2192,10 +2617,7 @@ onMounted(
 
 
     /*
-      Pointer fallback.
-
-      Nếu pointerup xảy ra
-      ngoài drag zone.
+      MOVE fallback.
     */
 
     window.addEventListener(
@@ -2211,17 +2633,25 @@ onMounted(
 
 
     /*
-      Khoảng 30 FPS.
+      RESIZE fallback.
+    */
 
-      Timer này KHÔNG di chuyển window.
+    window.addEventListener(
+      'pointerup',
+      stopCharacterResize
+    )
 
-      Nó chỉ kiểm tra:
-      cursor có đang ở vùng interactive
-      hay không.
 
-      Vì applyIgnoreMouseState()
-      có cache nên IPC chỉ gửi
-      khi true/false thực sự đổi.
+    window.addEventListener(
+      'pointercancel',
+      stopCharacterResize
+    )
+
+
+    /*
+      Mouse passthrough polling.
+
+      Không di chuyển BrowserWindow.
     */
 
     mousePassthroughTimer =
@@ -2233,10 +2663,6 @@ onMounted(
         33
       )
 
-
-    /*
-      Sync ngay lần đầu.
-    */
 
     await syncMousePassthrough()
   }
@@ -2272,6 +2698,18 @@ onBeforeUnmount(
     )
 
 
+    window.removeEventListener(
+      'pointerup',
+      stopCharacterResize
+    )
+
+
+    window.removeEventListener(
+      'pointercancel',
+      stopCharacterResize
+    )
+
+
     if (
       mousePassthroughTimer !==
       null
@@ -2300,6 +2738,20 @@ onBeforeUnmount(
     }
 
 
+    if (
+      rendererResizeEventFrame !==
+      null
+    ) {
+      window.cancelAnimationFrame(
+        rendererResizeEventFrame
+      )
+
+
+      rendererResizeEventFrame =
+        null
+    }
+
+
     pendingCharacterPosition =
       null
   }
@@ -2309,25 +2761,6 @@ onBeforeUnmount(
 
 <template>
   <main class="desktop-stage">
-
-    <!--
-      =========================================================
-      CHARACTER SHELL
-      =========================================================
-
-      Đây là vùng 500x700.
-
-      BrowserWindow không di chuyển.
-
-      Toàn bộ:
-      - Live2D
-      - resize
-      - controls
-      - Model Picker
-      - Reaction Wheel
-
-      đều nằm trong shell này.
-    -->
 
     <div
       class="character-shell"
@@ -2349,18 +2782,122 @@ onBeforeUnmount(
 
 
       <!-- =====================
-           CHARACTER DRAG ZONE
-           =====================
+           CHARACTER FRAME
+           ===================== -->
 
-           Đây là vùng duy nhất
-           để kéo character.
+      <div
+        v-show="characterFrameVisible"
+        class="character-frame"
+      />
 
-           KHÔNG dùng:
-           -webkit-app-region: drag
 
-           KHÔNG di chuyển:
-           BrowserWindow
-      -->
+      <!-- =====================
+           RESIZE: TOP LEFT
+           ===================== -->
+
+      <button
+        v-show="characterFrameVisible"
+        class="
+          character-resize-handle
+          character-resize-handle--nw
+        "
+        type="button"
+        title="Kéo để thay đổi kích thước"
+        @mouseenter="keepControlsVisible"
+        @mouseleave="scheduleControlsHide"
+        @pointerdown="
+          startCharacterResize(
+            $event,
+            'nw'
+          )
+        "
+        @pointermove="moveCharacterResize"
+        @pointerup="stopCharacterResize"
+        @pointercancel="stopCharacterResize"
+      ></button>
+
+
+      <!-- =====================
+           RESIZE: TOP RIGHT
+           ===================== -->
+
+      <button
+        v-show="characterFrameVisible"
+        class="
+          character-resize-handle
+          character-resize-handle--ne
+        "
+        type="button"
+        title="Kéo để thay đổi kích thước"
+        @mouseenter="keepControlsVisible"
+        @mouseleave="scheduleControlsHide"
+        @pointerdown="
+          startCharacterResize(
+            $event,
+            'ne'
+          )
+        "
+        @pointermove="moveCharacterResize"
+        @pointerup="stopCharacterResize"
+        @pointercancel="stopCharacterResize"
+      ></button>
+
+
+      <!-- =====================
+           RESIZE: BOTTOM LEFT
+           ===================== -->
+
+      <button
+        v-show="characterFrameVisible"
+        class="
+          character-resize-handle
+          character-resize-handle--sw
+        "
+        type="button"
+        title="Kéo để thay đổi kích thước"
+        @mouseenter="keepControlsVisible"
+        @mouseleave="scheduleControlsHide"
+        @pointerdown="
+          startCharacterResize(
+            $event,
+            'sw'
+          )
+        "
+        @pointermove="moveCharacterResize"
+        @pointerup="stopCharacterResize"
+        @pointercancel="stopCharacterResize"
+      ></button>
+
+
+      <!-- =====================
+           RESIZE: BOTTOM RIGHT
+           ===================== -->
+
+      <button
+        v-show="characterFrameVisible"
+        class="
+          character-resize-handle
+          character-resize-handle--se
+        "
+        type="button"
+        title="Kéo để thay đổi kích thước"
+        @mouseenter="keepControlsVisible"
+        @mouseleave="scheduleControlsHide"
+        @pointerdown="
+          startCharacterResize(
+            $event,
+            'se'
+          )
+        "
+        @pointermove="moveCharacterResize"
+        @pointerup="stopCharacterResize"
+        @pointercancel="stopCharacterResize"
+      ></button>
+
+
+      <!-- =====================
+           CHARACTER MOVE ZONE
+           ===================== -->
 
       <div
         v-if="
@@ -2379,7 +2916,7 @@ onBeforeUnmount(
 
 
       <!-- =====================
-           CONTROL BUTTONS
+           CONTROLS
            ===================== -->
 
       <Transition name="controls">
@@ -2396,8 +2933,6 @@ onBeforeUnmount(
           @mouseleave="scheduleControlsHide"
         >
 
-          <!-- React -->
-
           <button
             v-if="actions.length > 0"
             class="control-button react-button"
@@ -2412,8 +2947,6 @@ onBeforeUnmount(
           </button>
 
 
-          <!-- Models -->
-
           <button
             class="control-button models-button"
             type="button"
@@ -2426,8 +2959,6 @@ onBeforeUnmount(
             Models
           </button>
 
-
-          <!-- Reset -->
 
           <button
             class="control-button reset-button"
@@ -2498,27 +3029,29 @@ onBeforeUnmount(
 <style scoped>
 /*
   ============================================================
-  FULL-SCREEN TRANSPARENT HOST
+  FULL-SCREEN HOST
   ============================================================
 */
 
 .desktop-stage {
-  position: fixed;
+  position:
+    fixed;
 
-  inset: 0;
+  inset:
+    0;
 
-  width: 100%;
-  height: 100%;
+  width:
+    100%;
 
-  overflow: hidden;
+  height:
+    100%;
+
+  overflow:
+    hidden;
 
   background:
     transparent;
 
-  /*
-    Toàn host mặc định
-    không nhận PointerEvent.
-  */
   pointer-events:
     none;
 
@@ -2531,31 +3064,27 @@ onBeforeUnmount(
   ============================================================
   CHARACTER SHELL
   ============================================================
-
-  Đây chính là vùng 500x700 cũ.
-
-  Nó được di chuyển bằng
-  translate3d().
 */
 
 .character-shell {
-  position: absolute;
+  position:
+    absolute;
 
-  left: 0;
-  top: 0;
+  left:
+    0;
 
-  background:
-    transparent;
+  top:
+    0;
+
+  box-sizing:
+    border-box;
 
   overflow:
     visible;
 
-  /*
-    Shell không tự bắt click.
+  background:
+    transparent;
 
-    Chỉ những child cụ thể bên dưới
-    có pointer-events:auto.
-  */
   pointer-events:
     none;
 
@@ -2563,11 +3092,10 @@ onBeforeUnmount(
     none;
 
   will-change:
-    transform;
+    transform,
+    width,
+    height;
 
-  /*
-    BrowserWindow không drag native.
-  */
   -webkit-app-region:
     no-drag;
 }
@@ -2577,11 +3105,6 @@ onBeforeUnmount(
   ============================================================
   LIVE2D
   ============================================================
-
-  Canvas không cần nhận PointerEvent.
-
-  Live2DStage tự theo dõi cursor
-  bằng window.api.getCursorPosition().
 */
 
 :deep(.live2d-stage) {
@@ -2591,26 +3114,219 @@ onBeforeUnmount(
 
 
 /*
-  Nhưng resize handle
-  PHẢI nhận PointerEvent.
+  ============================================================
+  OLD MODEL RESIZE BUTTON
+  ============================================================
+
+  Không dùng nút ⤢ riêng nữa.
+
+  Resize bây giờ bằng toàn bộ
+  character frame.
 */
 
 :deep(.model-resize-handle) {
-  /*
-    Resize handle phải luôn
-    nằm trên drag zone.
-  */
-  z-index:
-    20000 !important;
+  display:
+    none !important;
+}
+
+
+/*
+  ============================================================
+  RED CHARACTER FRAME
+  ============================================================
+*/
+
+.character-frame {
+  position:
+    absolute;
+
+  inset:
+    80px;
+
+  box-sizing:
+    border-box;
+
+  border:
+    2px solid
+    rgba(
+      255,
+      90,
+      100,
+      0.92
+    );
+
+  border-radius:
+    12px;
+
+  box-shadow:
+    0 0 0 1px
+    rgba(
+      255,
+      255,
+      255,
+      0.28
+    ),
+    0 0 10px
+    rgba(
+      255,
+      80,
+      95,
+      0.10
+    );
 
   pointer-events:
-    auto !important;
+    none;
 
-  visibility:
-    visible;
+  z-index:
+    19000;
+}
+
+
+/*
+  ============================================================
+  RESIZE HANDLES
+  ============================================================
+*/
+
+.character-resize-handle {
+  position:
+    absolute;
+
+  width:
+    16px;
+
+  height:
+    16px;
+
+  padding:
+    0;
+
+  border:
+    2px solid
+    rgba(
+      255,
+      90,
+      100,
+      0.98
+    );
+
+  border-radius:
+    5px;
+
+  background:
+    rgba(
+      255,
+      255,
+      255,
+      0.98
+    );
+
+  box-shadow:
+    0 2px 8px
+    rgba(
+      0,
+      0,
+      0,
+      0.28
+    );
+
+  pointer-events:
+    auto;
+
+  touch-action:
+    none;
+
+  user-select:
+    none;
+
+  z-index:
+    20000;
 
   -webkit-app-region:
     no-drag;
+
+  transition:
+    transform 100ms ease,
+    box-shadow 100ms ease;
+}
+
+
+.character-resize-handle:hover {
+  transform:
+    scale(1.18);
+
+  box-shadow:
+    0 3px 11px
+    rgba(
+      0,
+      0,
+      0,
+      0.34
+    );
+}
+
+
+/*
+  TOP LEFT
+*/
+
+.character-resize-handle--nw {
+  left:
+    -8px;
+
+  top:
+    -8px;
+
+  cursor:
+    nwse-resize;
+}
+
+
+/*
+  TOP RIGHT
+*/
+
+.character-resize-handle--ne {
+  right:
+    -8px;
+
+  top:
+    -8px;
+
+  cursor:
+    nesw-resize;
+}
+
+
+/*
+  BOTTOM LEFT
+*/
+
+.character-resize-handle--sw {
+  left:
+    -8px;
+
+  bottom:
+    -8px;
+
+  cursor:
+    nesw-resize;
+}
+
+
+/*
+  BOTTOM RIGHT
+*/
+
+.character-resize-handle--se {
+  right:
+    -8px;
+
+  bottom:
+    -8px;
+
+  cursor:
+    nwse-resize;
 }
 
 
@@ -2618,20 +3334,14 @@ onBeforeUnmount(
   ============================================================
   MODEL DRAG ZONE
   ============================================================
-
-  Vùng transparent nhỏ trên thân.
-
-  Kéo zone này:
-    → thay characterX/Y
-    → CSS translate3d
-
-  BrowserWindow đứng yên.
 */
 
 .model-drag-zone {
-  position: absolute;
+  position:
+    absolute;
 
-  z-index: 40;
+  z-index:
+    40;
 
   background:
     transparent;
@@ -2654,36 +3364,29 @@ onBeforeUnmount(
 
 
 /*
-  Nếu muốn nhìn vùng drag để debug,
-  tạm thời đổi:
-
-  background: transparent;
-
-  thành:
-
-  background:
-    rgba(255, 0, 0, 0.25);
-*/
-
-
-/*
   ============================================================
   CHARACTER CONTROLS
   ============================================================
 */
 
 .character-controls {
-  position: absolute;
+  position:
+    absolute;
 
-  z-index: 9000;
+  z-index:
+    9000;
 
-  width: 100px;
+  width:
+    100px;
 
-  display: flex;
+  display:
+    flex;
 
-  flex-direction: column;
+  flex-direction:
+    column;
 
-  gap: 6px;
+  gap:
+    6px;
 
   pointer-events:
     auto;
@@ -2694,9 +3397,11 @@ onBeforeUnmount(
 
 
 .control-button {
-  width: 100px;
+  width:
+    100px;
 
-  min-height: 36px;
+  min-height:
+    36px;
 
   padding:
     0 12px;
@@ -2775,9 +3480,7 @@ onBeforeUnmount(
 
 
 /*
-  ============================================================
-  REACT BUTTON
-  ============================================================
+  React
 */
 
 .react-button {
@@ -2816,9 +3519,7 @@ onBeforeUnmount(
 
 
 /*
-  ============================================================
-  MODELS BUTTON
-  ============================================================
+  Models
 */
 
 .models-button {
@@ -2842,9 +3543,7 @@ onBeforeUnmount(
 
 
 /*
-  ============================================================
-  RESET BUTTON
-  ============================================================
+  Reset
 */
 
 .reset-button {
@@ -2874,9 +3573,11 @@ onBeforeUnmount(
 */
 
 .model-picker-container {
-  position: absolute;
+  position:
+    absolute;
 
-  z-index: 12000;
+  z-index:
+    12000;
 
   pointer-events:
     auto;
@@ -2890,17 +3591,17 @@ onBeforeUnmount(
   ============================================================
   REACTION WHEEL
   ============================================================
-
-  Wrapper giữ ReactionWheel
-  nằm trong character-shell 500x700.
 */
 
 .reaction-wheel-container {
-  position: absolute;
+  position:
+    absolute;
 
-  inset: 0;
+  inset:
+    0;
 
-  z-index: 11000;
+  z-index:
+    11000;
 
   pointer-events:
     auto;

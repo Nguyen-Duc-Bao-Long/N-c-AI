@@ -142,7 +142,7 @@ const MIN_USER_SCALE =
   phóng to thì chỉnh số này.
 */
 const ABSOLUTE_MAX_USER_SCALE =
-  2
+  4
 
 
 const VIEWPORT_PADDING =
@@ -159,6 +159,23 @@ const RESIZE_HANDLE_HIT_SIZE =
 */
 const RESIZE_HANDLE_MARGIN =
   18
+
+  /*
+  Đưa resize button vào gần
+  phần nhìn thấy của model hơn.
+
+  X càng lớn:
+    button càng dịch sang trái.
+
+  Y càng lớn:
+    button càng dịch xuống dưới.
+*/
+const RESIZE_HANDLE_INSET_X =
+  36
+
+
+const RESIZE_HANDLE_INSET_Y =
+  32
 
 
 /*
@@ -240,6 +257,15 @@ const resizeHandlePositionReady =
     false
   )
 
+  /*
+  Resize handle chỉ hiện
+  khi cursor đang ở model
+  hoặc đang ở chính resize handle.
+*/
+const resizeHandleVisible =
+  ref(
+    false
+  )
 
 /*
   ============================================================
@@ -456,89 +482,14 @@ function resetManualTransform():
 
 function getEffectiveMaxUserScale():
   number {
-  const currentModel =
-    model
+  /*
+    Không giới hạn theo viewport nữa.
 
+    User có thể phóng model
+    tới ABSOLUTE_MAX_USER_SCALE.
+  */
 
-  const currentApp =
-    app
-
-
-  if (
-    !currentModel ||
-    !currentApp ||
-    baseFitScale <= 0
-  ) {
-    return ABSOLUTE_MAX_USER_SCALE
-  }
-
-
-  const localBounds =
-    currentModel.getLocalBounds()
-
-
-  const modelWidth =
-    Math.max(
-      1,
-      localBounds.width
-    )
-
-
-  const modelHeight =
-    Math.max(
-      1,
-      localBounds.height
-    )
-
-
-  const availableWidth =
-    Math.max(
-      1,
-
-      currentApp.screen.width -
-      VIEWPORT_PADDING * 2
-    )
-
-
-  const availableHeight =
-    Math.max(
-      1,
-
-      currentApp.screen.height -
-      VIEWPORT_PADDING * 2
-    )
-
-
-  const maxTotalScaleX =
-    availableWidth /
-    modelWidth
-
-
-  const maxTotalScaleY =
-    availableHeight /
-    modelHeight
-
-
-  const maxTotalScale =
-    Math.min(
-      maxTotalScaleX,
-      maxTotalScaleY
-    )
-
-
-  const viewportMaxUserScale =
-    maxTotalScale /
-    Math.max(
-      baseFitScale,
-      0.0001
-    )
-
-
-  return clamp(
-    viewportMaxUserScale,
-    MIN_USER_SCALE,
-    ABSOLUTE_MAX_USER_SCALE
-  )
+  return ABSOLUTE_MAX_USER_SCALE
 }
 
 
@@ -734,13 +685,28 @@ function getResizeHandlePosition():
     currentModel.getBounds()
 
 
-  const rawX =
-    bounds.x +
-    bounds.width
+ /*
+  Bình thường top-right là:
+
+  x = bounds.x + bounds.width
+  y = bounds.y
+
+  Nhưng Live2D model có thể có
+  transparent/invisible bounds khá lớn.
+
+  Vì vậy kéo button vào trong
+  một chút để nó gần character hơn.
+*/
+
+const rawX =
+  bounds.x +
+  bounds.width -
+  RESIZE_HANDLE_INSET_X
 
 
-  const rawY =
-    bounds.y
+const rawY =
+  bounds.y +
+  RESIZE_HANDLE_INSET_Y
 
 
   /*
@@ -1005,6 +971,8 @@ function onResizePointerDown(
   isResizing.value =
     true
 
+  resizeHandleVisible.value =
+  true
 
   lastHoverState =
     true
@@ -1196,9 +1164,6 @@ function onResizePointerMove(
     vượt khỏi local canvas.
   */
 
-  keepModelInsideViewport()
-
-
   updateManualOffset()
 
 
@@ -1267,10 +1232,6 @@ function finishResize(
 
   isResizing.value =
     false
-
-
-  keepModelInsideViewport()
-
 
   syncResizeHandle()
 
@@ -1365,6 +1326,9 @@ function updateModelHover(
 
 
   if (!currentModel) {
+    resizeHandleVisible.value =
+      false
+
     return
   }
 
@@ -1373,17 +1337,47 @@ function updateModelHover(
     currentModel.getBounds()
 
 
+  /*
+    Cursor được tính là đang hover nếu:
+
+    1. đang resize
+    2. đang nằm trên model
+    3. đang nằm trên resize button
+
+    Điều số 3 rất quan trọng:
+    khi rê từ model sang button,
+    button sẽ KHÔNG biến mất.
+  */
+
   const hovered =
     isResizing.value ||
+
     bounds.contains(
       x,
       y
     ) ||
+
     pointInsideResizeHandle(
       x,
       y
     )
 
+
+  /*
+    Điều khiển visibility
+    của resize button.
+  */
+
+  resizeHandleVisible.value =
+    hovered
+
+
+  /*
+    Phần này tiếp tục gửi hover
+    sang App.vue để React /
+    Models / Reset hoạt động
+    như trước.
+  */
 
   if (
     hovered ===
@@ -2281,6 +2275,8 @@ function unloadCurrentModel():
   resizeHandlePositionReady.value =
     false
 
+  resizeHandleVisible.value =
+    false
 
   resizeDragState =
     null
@@ -2807,7 +2803,8 @@ onBeforeUnmount(
     <button
       v-show="
         modelReady &&
-        resizeHandlePositionReady
+        resizeHandlePositionReady &&
+        resizeHandleVisible
       "
       ref="resizeHandle"
       class="model-resize-handle"
@@ -2823,7 +2820,7 @@ onBeforeUnmount(
       @pointercancel="finishResize"
     >
       <span class="model-resize-handle__icon">
-        ↗
+        ⤢
       </span>
     </button>
   </div>
@@ -3003,16 +3000,28 @@ onBeforeUnmount(
 
 .model-resize-handle__icon {
   display:
-    block;
+    flex;
+
+  align-items:
+    center;
+
+  justify-content:
+    center;
 
   font-size:
-    19px;
+    22px;
 
   font-weight:
-    700;
+    600;
 
   line-height:
     1;
+
+  /*
+    Căn glyph ⤢ vào giữa button.
+  */
+  transform:
+    translateY(-1px);
 
   pointer-events:
     none;
