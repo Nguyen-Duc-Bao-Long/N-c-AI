@@ -51,6 +51,12 @@ type ModelBounds = {
 }
 
 
+type StageOffset = {
+  x: number
+  y: number
+}
+
+
 type Model3Expression = {
   Name?: string
   File?: string
@@ -94,29 +100,87 @@ type ModelRuntimeInfo = {
 
   hasIdleMotion: boolean
 
+  idleMotionGroup:
+    string | null
+
   hasPose: boolean
 
-  /*
-    Motion đầu tiên không phải Idle.
-
-    Với model kiểu Hiyori:
-    dùng một lần sau khi load
-    để áp dụng PartOpacity.
-  */
   initializationMotion:
     RuntimeMotionRef | null
 }
 
 
+type ResizeDragState = {
+  pointerId: number
+
+  startDistance: number
+
+  startUserScale: number
+
+  startOffsetX: number
+  startOffsetY: number
+
+  fixedX: number
+  fixedY: number
+}
+
+
 /*
   ============================================================
-  PROPS / EVENTS
+  SETTINGS
+  ============================================================
+*/
+
+const MIN_USER_SCALE =
+  0.6
+
+
+/*
+  Max cứng.
+
+  Muốn sau này tăng khả năng
+  phóng to thì chỉnh số này.
+*/
+const ABSOLUTE_MAX_USER_SCALE =
+  2
+
+
+const VIEWPORT_PADDING =
+  5
+
+
+const RESIZE_HANDLE_HIT_SIZE =
+  46
+
+
+/*
+  Button 32px nên margin 18px
+  giúp button không bị cắt.
+*/
+const RESIZE_HANDLE_MARGIN =
+  18
+
+
+/*
+  ============================================================
+  PROPS / EMITS
   ============================================================
 */
 
 const props =
   defineProps<{
-    character: CharacterConfig
+    character:
+      CharacterConfig
+
+    /*
+      Vị trí character-shell
+      trong BrowserWindow fullscreen.
+
+      App.vue truyền:
+      :stage-offset="stageOffset"
+    */
+    stageOffset?:
+      StageOffset
   }>()
 
 
@@ -135,7 +199,7 @@ const emit =
 
 /*
   ============================================================
-  PIXI / LIVE2D STATE
+  DOM STATE
   ============================================================
 */
 
@@ -144,6 +208,44 @@ const container =
     null
   )
 
+
+const resizeHandle =
+  ref<HTMLButtonElement | null>(
+    null
+  )
+
+
+const modelReady =
+  ref(
+    false
+  )
+
+
+const isResizing =
+  ref(
+    false
+  )
+
+
+/*
+  Không hiện resize button
+  cho tới khi tính được
+  left/top hợp lệ.
+
+  Fix lỗi button xuất hiện
+  ở góc trái trên 0,0.
+*/
+const resizeHandlePositionReady =
+  ref(
+    false
+  )
+
+
+/*
+  ============================================================
+  PIXI / LIVE2D
+  ============================================================
+*/
 
 let app:
   PIXI.Application | null =
@@ -155,13 +257,29 @@ let model:
     null
 
 
-/*
-  Runtime metadata
-  của model hiện tại.
-*/
+let baseFitScale =
+  1
+
+
+let userScaleMultiplier =
+  1
+
+
+let manualOffsetX =
+  0
+
+
+let manualOffsetY =
+  0
+
 
 let currentModelHasIdle =
   false
+
+
+let currentIdleMotionGroup:
+  string | null =
+    null
 
 
 let currentModelHasPose =
@@ -173,12 +291,1004 @@ let currentInitializationMotion:
     null
 
 
-/*
-  Dùng để tránh race condition
-  khi đổi model liên tục.
-*/
 let loadVersion =
   0
+
+
+let resizeDragState:
+  ResizeDragState | null =
+    null
+
+
+/*
+  ============================================================
+  BASIC HELPERS
+  ============================================================
+*/
+
+function clamp(
+  value: number,
+  min: number,
+  max: number
+): number {
+  return Math.min(
+    Math.max(
+      value,
+      min
+    ),
+    max
+  )
+}
+
+
+function getStageOffset():
+  StageOffset {
+  return {
+    x:
+      props.stageOffset?.x ??
+      0,
+
+    y:
+      props.stageOffset?.y ??
+      0
+  }
+}
+
+
+/*
+  BrowserWindow cursor
+  → local coordinate
+  của character-shell 500x700.
+*/
+
+function globalCursorToLocal(
+  x: number,
+  y: number
+): {
+  x: number
+  y: number
+} {
+  const offset =
+    getStageOffset()
+
+
+  return {
+    x:
+      x -
+      offset.x,
+
+    y:
+      y -
+      offset.y
+  }
+}
+
+
+/*
+  ============================================================
+  MODEL POSITION
+  ============================================================
+*/
+
+function getBaseModelPosition():
+  {
+    x: number
+    y: number
+  } {
+  const currentApp =
+    app
+
+
+  if (!currentApp) {
+    return {
+      x: 0,
+      y: 0
+    }
+  }
+
+
+  return {
+    x:
+      currentApp.screen.width *
+      props.character.transform.x,
+
+    y:
+      currentApp.screen.height *
+      props.character.transform.y
+  }
+}
+
+
+function updateManualOffset():
+  void {
+  const currentModel =
+    model
+
+
+  if (!currentModel) {
+    return
+  }
+
+
+  const basePosition =
+    getBaseModelPosition()
+
+
+  manualOffsetX =
+    currentModel.position.x -
+    basePosition.x
+
+
+  manualOffsetY =
+    currentModel.position.y -
+    basePosition.y
+}
+
+
+function resetManualTransform():
+  void {
+  userScaleMultiplier =
+    1
+
+
+  manualOffsetX =
+    0
+
+
+  manualOffsetY =
+    0
+
+
+  resizeDragState =
+    null
+
+
+  isResizing.value =
+    false
+}
+
+
+/*
+  ============================================================
+  MAX SCALE
+  ============================================================
+*/
+
+function getEffectiveMaxUserScale():
+  number {
+  const currentModel =
+    model
+
+
+  const currentApp =
+    app
+
+
+  if (
+    !currentModel ||
+    !currentApp ||
+    baseFitScale <= 0
+  ) {
+    return ABSOLUTE_MAX_USER_SCALE
+  }
+
+
+  const localBounds =
+    currentModel.getLocalBounds()
+
+
+  const modelWidth =
+    Math.max(
+      1,
+      localBounds.width
+    )
+
+
+  const modelHeight =
+    Math.max(
+      1,
+      localBounds.height
+    )
+
+
+  const availableWidth =
+    Math.max(
+      1,
+
+      currentApp.screen.width -
+      VIEWPORT_PADDING * 2
+    )
+
+
+  const availableHeight =
+    Math.max(
+      1,
+
+      currentApp.screen.height -
+      VIEWPORT_PADDING * 2
+    )
+
+
+  const maxTotalScaleX =
+    availableWidth /
+    modelWidth
+
+
+  const maxTotalScaleY =
+    availableHeight /
+    modelHeight
+
+
+  const maxTotalScale =
+    Math.min(
+      maxTotalScaleX,
+      maxTotalScaleY
+    )
+
+
+  const viewportMaxUserScale =
+    maxTotalScale /
+    Math.max(
+      baseFitScale,
+      0.0001
+    )
+
+
+  return clamp(
+    viewportMaxUserScale,
+    MIN_USER_SCALE,
+    ABSOLUTE_MAX_USER_SCALE
+  )
+}
+
+
+/*
+  ============================================================
+  KEEP MODEL INSIDE LOCAL 500x700
+  ============================================================
+
+  Đây chỉ giữ model trong
+  character-shell.
+
+  Nó KHÔNG ngăn cả character-shell
+  đi ra ngoài màn hình.
+
+  App.vue chịu trách nhiệm
+  kéo character-shell.
+*/
+
+function keepModelInsideViewport():
+  void {
+  const currentModel =
+    model
+
+
+  const currentApp =
+    app
+
+
+  if (
+    !currentModel ||
+    !currentApp
+  ) {
+    return
+  }
+
+
+  const bounds =
+    currentModel.getBounds()
+
+
+  const left =
+    bounds.x
+
+
+  const right =
+    bounds.x +
+    bounds.width
+
+
+  const top =
+    bounds.y
+
+
+  const bottom =
+    bounds.y +
+    bounds.height
+
+
+  const minX =
+    VIEWPORT_PADDING
+
+
+  const maxX =
+    currentApp.screen.width -
+    VIEWPORT_PADDING
+
+
+  const minY =
+    VIEWPORT_PADDING
+
+
+  const maxY =
+    currentApp.screen.height -
+    VIEWPORT_PADDING
+
+
+  let dx =
+    0
+
+
+  let dy =
+    0
+
+
+  if (
+    left <
+    minX
+  ) {
+    dx =
+      minX -
+      left
+  }
+  else if (
+    right >
+    maxX
+  ) {
+    dx =
+      maxX -
+      right
+  }
+
+
+  if (
+    top <
+    minY
+  ) {
+    dy =
+      minY -
+      top
+  }
+  else if (
+    bottom >
+    maxY
+  ) {
+    dy =
+      maxY -
+      bottom
+  }
+
+
+  if (
+    dx !== 0 ||
+    dy !== 0
+  ) {
+    currentModel.position.x +=
+      dx
+
+
+    currentModel.position.y +=
+      dy
+  }
+
+
+  updateManualOffset()
+}
+
+
+/*
+  ============================================================
+  RESIZE HANDLE POSITION
+  ============================================================
+*/
+
+function getResizeHandlePosition():
+  {
+    x: number
+    y: number
+  } | null {
+  const currentModel =
+    model
+
+
+  const currentApp =
+    app
+
+
+  if (
+    !currentModel ||
+    !currentApp
+  ) {
+    return null
+  }
+
+
+  const screenWidth =
+    currentApp.screen.width
+
+
+  const screenHeight =
+    currentApp.screen.height
+
+
+  /*
+    PIXI chưa resize xong.
+  */
+  if (
+    !Number.isFinite(
+      screenWidth
+    ) ||
+    !Number.isFinite(
+      screenHeight
+    ) ||
+    screenWidth <=
+      RESIZE_HANDLE_MARGIN * 2 ||
+    screenHeight <=
+      RESIZE_HANDLE_MARGIN * 2
+  ) {
+    return null
+  }
+
+
+  const bounds =
+    currentModel.getBounds()
+
+
+  const rawX =
+    bounds.x +
+    bounds.width
+
+
+  const rawY =
+    bounds.y
+
+
+  /*
+    Tránh button xuất hiện
+    ở 0,0 khi bounds lỗi.
+  */
+  if (
+    !Number.isFinite(
+      rawX
+    ) ||
+    !Number.isFinite(
+      rawY
+    ) ||
+    !Number.isFinite(
+      bounds.width
+    ) ||
+    !Number.isFinite(
+      bounds.height
+    ) ||
+    bounds.width <=
+      0 ||
+    bounds.height <=
+      0
+  ) {
+    return null
+  }
+
+
+  return {
+    x:
+      clamp(
+        rawX,
+        RESIZE_HANDLE_MARGIN,
+        screenWidth -
+          RESIZE_HANDLE_MARGIN
+      ),
+
+    y:
+      clamp(
+        rawY,
+        RESIZE_HANDLE_MARGIN,
+        screenHeight -
+          RESIZE_HANDLE_MARGIN
+      )
+  }
+}
+
+
+function syncResizeHandle():
+  void {
+  const handle =
+    resizeHandle.value
+
+
+  if (!handle) {
+    return
+  }
+
+
+  const position =
+    getResizeHandlePosition()
+
+
+  /*
+    Chưa có position hợp lệ
+    → giấu button hoàn toàn.
+  */
+  if (!position) {
+    resizeHandlePositionReady.value =
+      false
+
+
+    handle.style.visibility =
+      'hidden'
+
+
+    return
+  }
+
+
+  handle.style.left =
+    `${position.x}px`
+
+
+  handle.style.top =
+    `${position.y}px`
+
+
+  handle.style.visibility =
+    'visible'
+
+
+  resizeHandlePositionReady.value =
+    true
+}
+
+
+/*
+  ============================================================
+  POINTER → LOCAL STAGE
+  ============================================================
+*/
+
+function pointerToStage(
+  event: PointerEvent
+): {
+  x: number
+  y: number
+} {
+  const currentContainer =
+    container.value
+
+
+  const currentApp =
+    app
+
+
+  if (
+    !currentContainer ||
+    !currentApp
+  ) {
+    return {
+      x: 0,
+      y: 0
+    }
+  }
+
+
+  const rect =
+    currentContainer
+      .getBoundingClientRect()
+
+
+  const scaleX =
+    rect.width > 0
+      ?
+      currentApp.screen.width /
+      rect.width
+      :
+      1
+
+
+  const scaleY =
+    rect.height > 0
+      ?
+      currentApp.screen.height /
+      rect.height
+      :
+      1
+
+
+  return {
+    x:
+      (
+        event.clientX -
+        rect.left
+      ) *
+      scaleX,
+
+    y:
+      (
+        event.clientY -
+        rect.top
+      ) *
+      scaleY
+  }
+}
+
+
+/*
+  ============================================================
+  RESIZE START
+  ============================================================
+*/
+
+function onResizePointerDown(
+  event: PointerEvent
+): void {
+  const currentModel =
+    model
+
+
+  if (
+    !currentModel ||
+    !app
+  ) {
+    return
+  }
+
+
+  event.preventDefault()
+  event.stopPropagation()
+
+
+  const pointer =
+    pointerToStage(
+      event
+    )
+
+
+  const bounds =
+    currentModel.getBounds()
+
+
+  /*
+    Resize từ góc trên-phải.
+
+    Giữ góc dưới-trái cố định.
+  */
+
+  const fixedX =
+    bounds.x
+
+
+  const fixedY =
+    bounds.y +
+    bounds.height
+
+
+  const startDistance =
+    Math.hypot(
+      pointer.x -
+        fixedX,
+
+      pointer.y -
+        fixedY
+    )
+
+
+  if (
+    !Number.isFinite(
+      startDistance
+    ) ||
+    startDistance <=
+      1
+  ) {
+    return
+  }
+
+
+  resizeDragState = {
+    pointerId:
+      event.pointerId,
+
+    startDistance,
+
+    startUserScale:
+      userScaleMultiplier,
+
+    startOffsetX:
+      manualOffsetX,
+
+    startOffsetY:
+      manualOffsetY,
+
+    fixedX,
+
+    fixedY
+  }
+
+
+  isResizing.value =
+    true
+
+
+  lastHoverState =
+    true
+
+
+  emit(
+    'hoverChange',
+    true
+  )
+
+
+  const target =
+    event.currentTarget as HTMLElement
+
+
+  try {
+    target.setPointerCapture(
+      event.pointerId
+    )
+  }
+  catch {
+    /*
+      Ignore.
+    */
+  }
+
+
+  console.log(
+    '[Live2D] Resize started'
+  )
+}
+
+
+/*
+  ============================================================
+  RESIZE MOVE
+  ============================================================
+*/
+
+function onResizePointerMove(
+  event: PointerEvent
+): void {
+  const drag =
+    resizeDragState
+
+
+  const currentModel =
+    model
+
+
+  if (
+    !drag ||
+    !currentModel ||
+    !app
+  ) {
+    return
+  }
+
+
+  if (
+    event.pointerId !==
+    drag.pointerId
+  ) {
+    return
+  }
+
+
+  event.preventDefault()
+  event.stopPropagation()
+
+
+  const pointer =
+    pointerToStage(
+      event
+    )
+
+
+  const currentDistance =
+    Math.hypot(
+      pointer.x -
+        drag.fixedX,
+
+      pointer.y -
+        drag.fixedY
+    )
+
+
+  if (
+    !Number.isFinite(
+      currentDistance
+    )
+  ) {
+    return
+  }
+
+
+  const ratio =
+    currentDistance /
+    drag.startDistance
+
+
+  if (
+    !Number.isFinite(
+      ratio
+    ) ||
+    ratio <=
+      0
+  ) {
+    return
+  }
+
+
+  const requestedScale =
+    drag.startUserScale *
+    ratio
+
+
+  const effectiveMaxScale =
+    getEffectiveMaxUserScale()
+
+
+  userScaleMultiplier =
+    clamp(
+      requestedScale,
+      MIN_USER_SCALE,
+      effectiveMaxScale
+    )
+
+
+  /*
+    Apply scale.
+  */
+
+  currentModel.scale.set(
+    baseFitScale *
+    userScaleMultiplier
+  )
+
+
+  /*
+    Đưa model về position
+    lúc bắt đầu resize.
+  */
+
+  const basePosition =
+    getBaseModelPosition()
+
+
+  currentModel.position.set(
+    basePosition.x +
+      drag.startOffsetX,
+
+    basePosition.y +
+      drag.startOffsetY
+  )
+
+
+  /*
+    Giữ bottom-left cố định.
+  */
+
+  const scaledBounds =
+    currentModel.getBounds()
+
+
+  const deltaX =
+    drag.fixedX -
+    scaledBounds.x
+
+
+  const deltaY =
+    drag.fixedY -
+    (
+      scaledBounds.y +
+      scaledBounds.height
+    )
+
+
+  currentModel.position.x +=
+    deltaX
+
+
+  currentModel.position.y +=
+    deltaY
+
+
+  /*
+    Không để resize làm model
+    vượt khỏi local canvas.
+  */
+
+  keepModelInsideViewport()
+
+
+  updateManualOffset()
+
+
+  syncResizeHandle()
+
+
+  emitModelBounds()
+}
+
+
+/*
+  ============================================================
+  RESIZE END
+  ============================================================
+*/
+
+function finishResize(
+  event: PointerEvent
+): void {
+  const drag =
+    resizeDragState
+
+
+  if (!drag) {
+    return
+  }
+
+
+  if (
+    event.pointerId !==
+    drag.pointerId
+  ) {
+    return
+  }
+
+
+  event.preventDefault()
+  event.stopPropagation()
+
+
+  const target =
+    event.currentTarget as HTMLElement
+
+
+  try {
+    if (
+      target.hasPointerCapture(
+        event.pointerId
+      )
+    ) {
+      target.releasePointerCapture(
+        event.pointerId
+      )
+    }
+  }
+  catch {
+    /*
+      Ignore.
+    */
+  }
+
+
+  resizeDragState =
+    null
+
+
+  isResizing.value =
+    false
+
+
+  keepModelInsideViewport()
+
+
+  syncResizeHandle()
+
+
+  emitModelBounds()
+
+
+  console.log(
+    '[Live2D] Resize finished:',
+    {
+      scale:
+        userScaleMultiplier,
+
+      max:
+        getEffectiveMaxUserScale()
+    }
+  )
+}
 
 
 /*
@@ -200,30 +1310,81 @@ let lastHoverState =
   false
 
 
+function pointInsideResizeHandle(
+  x: number,
+  y: number
+): boolean {
+  if (
+    !modelReady.value ||
+    !resizeHandlePositionReady.value
+  ) {
+    return false
+  }
+
+
+  const position =
+    getResizeHandlePosition()
+
+
+  if (!position) {
+    return false
+  }
+
+
+  const half =
+    RESIZE_HANDLE_HIT_SIZE /
+    2
+
+
+  return (
+    x >=
+      position.x -
+        half &&
+
+    x <=
+      position.x +
+        half &&
+
+    y >=
+      position.y -
+        half &&
+
+    y <=
+      position.y +
+        half
+  )
+}
+
+
 function updateModelHover(
   x: number,
   y: number
 ): void {
-  if (!model) {
+  const currentModel =
+    model
+
+
+  if (!currentModel) {
     return
   }
 
 
   const bounds =
-    model.getBounds()
+    currentModel.getBounds()
 
 
   const hovered =
+    isResizing.value ||
     bounds.contains(
+      x,
+      y
+    ) ||
+    pointInsideResizeHandle(
       x,
       y
     )
 
 
-  /*
-    Chỉ emit khi trạng thái
-    hover thực sự thay đổi.
-  */
   if (
     hovered ===
     lastHoverState
@@ -245,8 +1406,12 @@ function updateModelHover(
 
 async function updateCursorFocus():
   Promise<void> {
+  const currentModel =
+    model
+
+
   if (
-    !model ||
+    !currentModel ||
     cursorRequestPending
   ) {
     return
@@ -264,21 +1429,41 @@ async function updateCursorFocus():
 
 
     /*
-      Model nhìn theo chuột.
+      Model có thể bị đổi
+      trong lúc await IPC.
     */
-    model.focus(
-      cursor.x,
-      cursor.y
-    )
+    if (
+      model !==
+      currentModel
+    ) {
+      return
+    }
 
 
-    /*
-      Detect hover.
-    */
+    const localCursor =
+      globalCursorToLocal(
+        cursor.x,
+        cursor.y
+      )
+
+
+    if (
+      !isResizing.value
+    ) {
+      currentModel.focus(
+        localCursor.x,
+        localCursor.y
+      )
+    }
+
+
     updateModelHover(
-      cursor.x,
-      cursor.y
+      localCursor.x,
+      localCursor.y
     )
+
+
+    syncResizeHandle()
   }
   catch (error) {
     console.error(
@@ -303,9 +1488,6 @@ function startCursorTracking():
   }
 
 
-  /*
-    Khoảng 30 FPS.
-  */
   cursorTrackingTimer =
     window.setInterval(
       () => {
@@ -357,15 +1539,6 @@ function fileNameWithoutExtension(
     path
 
 
-  /*
-    Happy.exp3.json
-          ↓
-    Happy
-
-    Happy.motion3.json
-          ↓
-    Happy
-  */
   return fileName.replace(
     /\.(?:exp3|motion3)\.json$/i,
     ''
@@ -377,17 +1550,6 @@ function fileNameWithoutExtension(
   ============================================================
   DISCOVER MODEL RUNTIME
   ============================================================
-
-  Đọc model3.json trước khi
-  Live2DModel.from().
-
-  Xác định:
-
-  - Expressions
-  - Motions
-  - Idle
-  - Pose
-  - initialization motion
 */
 
 async function discoverModelRuntime(
@@ -406,11 +1568,9 @@ async function discoverModelRuntime(
   }
 
 
-  /*
-    Không tách "as Model3Json"
-    xuống dòng để tránh Vue parser lỗi.
-  */
-  const json: Model3Json = await response.json()
+  const json:
+    Model3Json =
+      await response.json()
 
 
   const fileReferences =
@@ -423,9 +1583,7 @@ async function discoverModelRuntime(
 
 
   /*
-    ==========================================================
     POSE
-    ==========================================================
   */
 
   const hasPose =
@@ -436,9 +1594,7 @@ async function discoverModelRuntime(
 
 
   /*
-    ==========================================================
     EXPRESSIONS
-    ==========================================================
   */
 
   const expressions =
@@ -452,7 +1608,8 @@ async function discoverModelRuntime(
       expression,
       index
     ) => {
-      let name: string
+      let name:
+        string
 
 
       if (
@@ -492,9 +1649,7 @@ async function discoverModelRuntime(
 
 
   /*
-    ==========================================================
     MOTIONS
-    ==========================================================
   */
 
   const motions:
@@ -511,6 +1666,11 @@ async function discoverModelRuntime(
     false
 
 
+  let idleMotionGroup:
+    string | null =
+      null
+
+
   let initializationMotion:
     RuntimeMotionRef | null =
       null
@@ -523,9 +1683,6 @@ async function discoverModelRuntime(
       group,
       groupMotions
     ]) => {
-      /*
-        Ignore group rỗng.
-      */
       if (
         !Array.isArray(
           groupMotions
@@ -538,12 +1695,8 @@ async function discoverModelRuntime(
 
 
       /*
-        ======================================================
-        IDLE
-        ======================================================
-
-        Idle là motion hệ thống,
-        không hiện trong React.
+        Idle không hiện
+        trong Reaction Wheel.
       */
 
       if (
@@ -554,26 +1707,20 @@ async function discoverModelRuntime(
         hasIdleMotion =
           true
 
+
+        idleMotionGroup ??=
+          group
+
+
         return
       }
 
-
-      /*
-        ======================================================
-        REACT MOTIONS
-        ======================================================
-      */
 
       groupMotions.forEach(
         (
           motion,
           index
         ) => {
-          /*
-            Motion đầu tiên không phải Idle
-            được dùng để initialize model
-            không có Pose + không có Idle.
-          */
           if (
             !initializationMotion
           ) {
@@ -588,19 +1735,10 @@ async function discoverModelRuntime(
           }
 
 
-          let label: string
+          let label:
+            string
 
 
-          /*
-            Nếu một group có nhiều motion:
-
-            Happy 1
-            Happy 2
-
-            Nếu chỉ một:
-
-            Happy
-          */
           if (
             groupMotions.length >
             1
@@ -614,10 +1752,6 @@ async function discoverModelRuntime(
           }
 
 
-          /*
-            Nếu group tên quá chung,
-            hiển thị tên file.
-          */
           if (
             motion.File &&
             (
@@ -653,15 +1787,15 @@ async function discoverModelRuntime(
   )
 
 
-  /*
-    ==========================================================
-    DEBUG
-    ==========================================================
-  */
-
   console.log(
     '[Live2D] Has Idle:',
     hasIdleMotion
+  )
+
+
+  console.log(
+    '[Live2D] Idle group:',
+    idleMotionGroup
   )
 
 
@@ -696,6 +1830,8 @@ async function discoverModelRuntime(
 
     hasIdleMotion,
 
+    idleMotionGroup,
+
     hasPose,
 
     initializationMotion
@@ -705,31 +1841,29 @@ async function discoverModelRuntime(
 
 /*
   ============================================================
-  INITIALIZE MODEL
+  HIYORI INITIALIZATION
   ============================================================
 
-  Dành cho model kiểu Hiyori:
+  PHẢI GIỮ.
 
-  - không có Pose
-  - không có Idle
-  - motion có PartOpacity
+  Hiyori có motion điều khiển
+  PartOpacity nhưng không Pose.
 
-  Sau khi setOpacityFromMotion = true,
-  chạy motion đầu tiên một lần để
-  PartArmA / PartArmB nhận opacity.
+  Nếu bỏ logic này có thể
+  quay lại lỗi nhiều tay.
 */
 
 async function initializeMotionOnlyModel():
   Promise<void> {
-  if (!model) {
+  const currentModel =
+    model
+
+
+  if (!currentModel) {
     return
   }
 
 
-  /*
-    Model có Pose:
-    để Pose tự quản lý PartOpacity.
-  */
   if (
     currentModelHasPose
   ) {
@@ -737,10 +1871,6 @@ async function initializeMotionOnlyModel():
   }
 
 
-  /*
-    Model có Idle thật:
-    không cần initialization workaround.
-  */
   if (
     currentModelHasIdle
   ) {
@@ -748,40 +1878,26 @@ async function initializeMotionOnlyModel():
   }
 
 
-  if (
-    !currentInitializationMotion
-  ) {
-    console.log(
-      '[Live2D] No initialization motion'
-    )
+  const initialization =
+    currentInitializationMotion
 
+
+  if (!initialization) {
     return
   }
 
 
   console.log(
     '[Live2D] Initializing no-pose/no-idle model:',
-    currentInitializationMotion
+    initialization
   )
 
 
   try {
-    /*
-      FORCE để chắc chắn motion chạy.
-
-      Với Hiyori:
-      curve PartArmA / PartArmB
-      sẽ được áp dụng.
-    */
-    await model.motion(
-      currentInitializationMotion.group,
-      currentInitializationMotion.index,
+    await currentModel.motion(
+      initialization.group,
+      initialization.index,
       MotionPriority.FORCE
-    )
-
-
-    console.log(
-      '[Live2D] Initialization motion started'
     )
   }
   catch (error) {
@@ -795,14 +1911,18 @@ async function initializeMotionOnlyModel():
 
 /*
   ============================================================
-  RUN REACTION
+  RUN ACTION
   ============================================================
 */
 
 async function runAction(
   action: Live2DAction
 ): Promise<void> {
-  if (!model) {
+  const currentModel =
+    model
+
+
+  if (!currentModel) {
     return
   }
 
@@ -813,18 +1933,12 @@ async function runAction(
   )
 
 
-  /*
-    ==========================================================
-    EXPRESSION
-    ==========================================================
-  */
-
   if (
     action.type ===
     'expression'
   ) {
     try {
-      await model.expression(
+      await currentModel.expression(
         action.name
       )
     }
@@ -840,23 +1954,8 @@ async function runAction(
   }
 
 
-  /*
-    ==========================================================
-    MOTION
-    ==========================================================
-
-    *.motion3.json luôn chạy
-    bằng model.motion().
-
-    Không quan trọng file nằm trong:
-
-    animations/
-    motions/
-    expressions/
-  */
-
   try {
-    await model.motion(
+    await currentModel.motion(
       action.group,
       action.index,
       MotionPriority.FORCE
@@ -879,7 +1978,11 @@ async function runAction(
 
 async function resetReaction():
   Promise<void> {
-  if (!model) {
+  const currentModel =
+    model
+
+
+  if (!currentModel) {
     return
   }
 
@@ -890,46 +1993,33 @@ async function resetReaction():
 
 
   const motionManager =
-    model
+    currentModel
       .internalModel
       .motionManager
 
 
-  /*
-    Dừng motion hiện tại.
-  */
   motionManager
     .stopAllMotions()
 
 
-  /*
-    Reset Expression.
-  */
   motionManager
     .expressionManager
     ?.resetExpression()
 
 
   /*
-    ==========================================================
-    CASE 1
-    MODEL CÓ IDLE
-    ==========================================================
+    MODEL CÓ IDLE.
   */
 
   if (
-    currentModelHasIdle
+    currentModelHasIdle &&
+    currentIdleMotionGroup
   ) {
     try {
-      await model.motion(
-        'Idle',
+      await currentModel.motion(
+        currentIdleMotionGroup,
         0,
         MotionPriority.IDLE
-      )
-
-
-      console.log(
-        '[Live2D] Idle restarted'
       )
     }
     catch (error) {
@@ -945,15 +2035,8 @@ async function resetReaction():
 
 
   /*
-    ==========================================================
-    CASE 2
-    KHÔNG IDLE + KHÔNG POSE
-    ==========================================================
-
-    Ví dụ Hiyori.
-
-    Chạy lại initialization motion
-    để phục hồi PartOpacity.
+    MODEL HIYORI:
+    không Pose + có initialization motion.
   */
 
   if (
@@ -961,16 +2044,10 @@ async function resetReaction():
     currentInitializationMotion
   ) {
     try {
-      await model.motion(
+      await currentModel.motion(
         currentInitializationMotion.group,
         currentInitializationMotion.index,
         MotionPriority.FORCE
-      )
-
-
-      console.log(
-        '[Live2D] Initialization motion restarted:',
-        currentInitializationMotion
       )
     }
     catch (error) {
@@ -986,18 +2063,9 @@ async function resetReaction():
 
 
   /*
-    ==========================================================
-    CASE 3
-    KHÔNG CÓ BASELINE
-    ==========================================================
-
-    Reload model.
+    Không có baseline
+    → reload.
   */
-
-  console.log(
-    '[Live2D] No Idle/init motion - reload model'
-  )
-
 
   await loadCharacter(
     props.character
@@ -1005,12 +2073,6 @@ async function resetReaction():
 }
 
 
-/*
-  App.vue có thể gọi:
-
-  live2dStage.runAction()
-  live2dStage.resetReaction()
-*/
 defineExpose({
   runAction,
   resetReaction
@@ -1025,13 +2087,17 @@ defineExpose({
 
 function emitModelBounds():
   void {
-  if (!model) {
+  const currentModel =
+    model
+
+
+  if (!currentModel) {
     return
   }
 
 
   const bounds =
-    model.getBounds()
+    currentModel.getBounds()
 
 
   emit(
@@ -1055,53 +2121,79 @@ function emitModelBounds():
 
 /*
   ============================================================
-  MODEL TRANSFORM
+  FIT MODEL
   ============================================================
 */
 
 function fitCurrentModel():
   void {
+  const currentModel =
+    model
+
+
+  const currentApp =
+    app
+
+
   if (
-    !app ||
-    !model
+    !currentModel ||
+    !currentApp
   ) {
     return
   }
 
 
   /*
-    Reset scale trước khi đo.
+    Scale = 1 để đo
+    kích thước gốc.
   */
-  model.scale.set(
+
+  currentModel.scale.set(
     1
   )
 
 
   const modelWidth =
-    model.width
+    currentModel.width
 
 
   const modelHeight =
-    model.height
+    currentModel.height
 
 
   if (
-    modelWidth <=
-      0 ||
-    modelHeight <=
-      0
+    modelWidth <= 0 ||
+    modelHeight <= 0
   ) {
     return
   }
 
 
+  const availableWidth =
+    Math.max(
+      1,
+
+      currentApp.screen.width -
+      VIEWPORT_PADDING * 2
+    )
+
+
+  const availableHeight =
+    Math.max(
+      1,
+
+      currentApp.screen.height -
+      VIEWPORT_PADDING * 2
+    )
+
+
   const scaleX =
-    app.screen.width /
+    availableWidth /
     modelWidth
 
 
   const scaleY =
-    app.screen.height /
+    availableHeight /
     modelHeight
 
 
@@ -1112,52 +2204,66 @@ function fitCurrentModel():
     )
 
 
-  const finalScale =
+  baseFitScale =
     fitScale *
-    props
-      .character
-      .transform
-      .scale
+    props.character.transform.scale
 
 
-  model.scale.set(
-    finalScale
+  const effectiveMaxScale =
+    getEffectiveMaxUserScale()
+
+
+  userScaleMultiplier =
+    clamp(
+      userScaleMultiplier,
+      MIN_USER_SCALE,
+      effectiveMaxScale
+    )
+
+
+  currentModel.scale.set(
+    baseFitScale *
+    userScaleMultiplier
   )
 
 
-  model.position.set(
-    app.screen.width *
-      props
-        .character
-        .transform
-        .x,
+  const basePosition =
+    getBaseModelPosition()
 
-    app.screen.height *
-      props
-        .character
-        .transform
-        .y
+
+  currentModel.position.set(
+    basePosition.x +
+      manualOffsetX,
+
+    basePosition.y +
+      manualOffsetY
   )
+
+
+  keepModelInsideViewport()
 
 
   emitModelBounds()
+
+
+  syncResizeHandle()
 }
 
 
 /*
   ============================================================
-  UNLOAD CURRENT MODEL
+  UNLOAD
   ============================================================
 */
 
 function unloadCurrentModel():
   void {
-  /*
-    Reset runtime metadata.
-  */
-
   currentModelHasIdle =
     false
+
+
+  currentIdleMotionGroup =
+    null
 
 
   currentModelHasPose =
@@ -1166,6 +2272,22 @@ function unloadCurrentModel():
 
   currentInitializationMotion =
     null
+
+
+  modelReady.value =
+    false
+
+
+  resizeHandlePositionReady.value =
+    false
+
+
+  resizeDragState =
+    null
+
+
+  isResizing.value =
+    false
 
 
   lastHoverState =
@@ -1184,38 +2306,50 @@ function unloadCurrentModel():
   )
 
 
-  if (!model) {
+  const currentModel =
+    model
+
+
+  if (!currentModel) {
     return
   }
 
 
   /*
-    Dừng motion trước khi destroy.
+    Set null trước khi destroy
+    để async cursor tracking
+    không dùng model cũ.
   */
+
+  model =
+    null
+
+
   try {
-    model
+    currentModel
       .internalModel
       .motionManager
       .stopAllMotions()
   }
   catch {
     /*
-      Ignore cleanup error.
+      Ignore.
     */
   }
 
 
   if (
-    model.parent
+    currentModel.parent
   ) {
-    model.parent
+    currentModel
+      .parent
       .removeChild(
-        model
+        currentModel
       )
   }
 
 
-  model.destroy({
+  currentModel.destroy({
     children:
       true,
 
@@ -1225,10 +2359,6 @@ function unloadCurrentModel():
     baseTexture:
       true
   })
-
-
-  model =
-    null
 }
 
 
@@ -1239,10 +2369,13 @@ function unloadCurrentModel():
 */
 
 async function loadCharacter(
-  character:
-    CharacterConfig
+  character: CharacterConfig
 ): Promise<void> {
-  if (!app) {
+  const currentApp =
+    app
+
+
+  if (!currentApp) {
     return
   }
 
@@ -1251,9 +2384,6 @@ async function loadCharacter(
     ++loadVersion
 
 
-  /*
-    Xóa model cũ.
-  */
   unloadCurrentModel()
 
 
@@ -1270,10 +2400,8 @@ async function loadCharacter(
 
 
     /*
-      ========================================================
-      STEP 1
-      ĐỌC MODEL3.JSON
-      ========================================================
+      STEP 1:
+      đọc model3.json.
     */
 
     const runtimeInfo =
@@ -1282,10 +2410,6 @@ async function loadCharacter(
       )
 
 
-    /*
-      Nếu user chọn model khác
-      trong lúc fetch.
-    */
     if (
       currentLoadVersion !==
       loadVersion
@@ -1295,21 +2419,14 @@ async function loadCharacter(
 
 
     /*
-      ========================================================
-      STEP 2
-      CONFIGURE PART OPACITY
-      ========================================================
+      STEP 2:
+      HIYORI PART OPACITY FIX.
 
       Có Pose:
         Pose quản lý opacity.
 
-      Không có Pose:
-        motion3 được phép quản lý
-        PartOpacity trực tiếp.
-
-      Hiyori:
-        hasPose = false
-        → true
+      Không Pose:
+        cho motion quản lý opacity.
     */
 
     config.cubism4.setOpacityFromMotion =
@@ -1323,15 +2440,14 @@ async function loadCharacter(
 
 
     /*
-      ========================================================
-      STEP 3
-      LOAD LIVE2D MODEL
-      ========================================================
+      STEP 3:
+      load Live2D.
     */
 
     const newModel =
       await Live2DModel.from(
         character.modelUrl,
+
         {
           autoInteract:
             false
@@ -1339,10 +2455,6 @@ async function loadCharacter(
       )
 
 
-    /*
-      Nếu user đổi model
-      trong lúc load.
-    */
     if (
       currentLoadVersion !==
       loadVersion
@@ -1364,17 +2476,40 @@ async function loadCharacter(
 
 
     /*
-      Model hiện tại.
+      App có thể đã destroy
+      trong thời gian model load.
     */
+
+    if (
+      app !==
+      currentApp
+    ) {
+      newModel.destroy({
+        children:
+          true,
+
+        texture:
+          true,
+
+        baseTexture:
+          true
+      })
+
+
+      return
+    }
+
+
     model =
       newModel
 
 
-    /*
-      Runtime metadata.
-    */
     currentModelHasIdle =
       runtimeInfo.hasIdleMotion
+
+
+    currentIdleMotionGroup =
+      runtimeInfo.idleMotionGroup
 
 
     currentModelHasPose =
@@ -1391,6 +2526,9 @@ async function loadCharacter(
         hasIdle:
           currentModelHasIdle,
 
+        idleGroup:
+          currentIdleMotionGroup,
+
         hasPose:
           currentModelHasPose,
 
@@ -1400,40 +2538,26 @@ async function loadCharacter(
     )
 
 
-    /*
-      Anchor giữa model.
-    */
-    model.anchor.set(
+    newModel.anchor.set(
       0.5,
       0.5
     )
 
 
-    /*
-      Add vào Pixi Stage.
-    */
-    app.stage.addChild(
-      model
+    currentApp.stage.addChild(
+      newModel
     )
 
 
+    modelReady.value =
+      true
+
+
     /*
-      Scale + position.
+      Fit model trước.
     */
+
     fitCurrentModel()
-
-
-    /*
-      ========================================================
-      STEP 4
-      SEND REACT ACTIONS
-      ========================================================
-    */
-
-    console.log(
-      '[Live2D] Actions:',
-      runtimeInfo.actions
-    )
 
 
     emit(
@@ -1443,28 +2567,12 @@ async function loadCharacter(
 
 
     /*
-      ========================================================
-      STEP 5
-      INITIALIZE PART OPACITY
-      ========================================================
-
-      Với Hiyori:
-
-      - no Pose
-      - no Idle
-      - có PartArmA / PartArmB
-        trong motion3
-
-      → chạy motion đầu tiên một lần.
+      Hiyori / no-pose initialization.
     */
 
     await initializeMotionOnlyModel()
 
 
-    /*
-      Nếu user đổi model
-      trong khi initialize.
-    */
     if (
       currentLoadVersion !==
       loadVersion
@@ -1474,9 +2582,17 @@ async function loadCharacter(
 
 
     /*
-      Recalculate bounds.
+      Motion có thể thay đổi
+      PartOpacity/bounds.
     */
+
+    keepModelInsideViewport()
+
+
     emitModelBounds()
+
+
+    syncResizeHandle()
 
 
     console.log(
@@ -1506,36 +2622,28 @@ async function loadCharacter(
 
 onMounted(
   async () => {
-    if (
-      !container.value
-    ) {
+    const currentContainer =
+      container.value
+
+
+    if (!currentContainer) {
       return
     }
 
 
-    /*
-      Expose PIXI.
-    */
     ;(window as any).PIXI =
       PIXI
 
 
-    /*
-      Register Pixi ticker.
-    */
-    Live2DModel
-      .registerTicker(
-        PIXI.Ticker
-      )
+    Live2DModel.registerTicker(
+      PIXI.Ticker
+    )
 
 
-    /*
-      Create Pixi Application.
-    */
-    app =
+    const newApp =
       new PIXI.Application({
         resizeTo:
-          container.value,
+          currentContainer,
 
         backgroundAlpha:
           0,
@@ -1556,39 +2664,43 @@ onMounted(
       })
 
 
+    app =
+      newApp
+
+
+    const canvas =
+      newApp.view as unknown as HTMLCanvasElement
+
+
+    currentContainer.appendChild(
+      canvas
+    )
+
+
     /*
-      Keep cast on one line.
+      Handle position được sync
+      theo Pixi ticker.
+
+      Không phụ thuộc hoàn toàn
+      vào cursor polling.
     */
-    const canvas = app.view as unknown as HTMLCanvasElement
+
+    newApp.ticker.add(
+      syncResizeHandle
+    )
 
 
-    container
-      .value
-      .appendChild(
-        canvas
-      )
-
-
-    /*
-      Resize.
-    */
     window.addEventListener(
       'resize',
       fitCurrentModel
     )
 
 
-    /*
-      Load initial model.
-    */
     await loadCharacter(
       props.character
     )
 
 
-    /*
-      Cursor tracking.
-    */
     startCursorTracking()
   }
 )
@@ -1604,7 +2716,18 @@ watch(
   () =>
     props.character.id,
 
-  async () => {
+  async (
+    newCharacterId,
+    oldCharacterId
+  ) => {
+    if (
+      newCharacterId !==
+      oldCharacterId
+    ) {
+      resetManualTransform()
+    }
+
+
     await loadCharacter(
       props.character
     )
@@ -1623,9 +2746,6 @@ onBeforeUnmount(
     stopCursorTracking()
 
 
-    /*
-      Hủy request load cũ.
-    */
     loadVersion++
 
 
@@ -1633,6 +2753,20 @@ onBeforeUnmount(
       'resize',
       fitCurrentModel
     )
+
+
+    /*
+      Remove ticker callback
+      trước khi destroy app.
+    */
+
+    if (
+      app
+    ) {
+      app.ticker.remove(
+        syncResizeHandle
+      )
+    }
 
 
     unloadCurrentModel()
@@ -1643,6 +2777,7 @@ onBeforeUnmount(
     ) {
       app.destroy(
         true,
+
         {
           children:
             true,
@@ -1668,22 +2803,218 @@ onBeforeUnmount(
   <div
     ref="container"
     class="live2d-stage"
-  />
+  >
+    <button
+      v-show="
+        modelReady &&
+        resizeHandlePositionReady
+      "
+      ref="resizeHandle"
+      class="model-resize-handle"
+      :class="{
+        'model-resize-handle--active':
+          isResizing
+      }"
+      type="button"
+      title="Kéo để phóng to / thu nhỏ model"
+      @pointerdown="onResizePointerDown"
+      @pointermove="onResizePointerMove"
+      @pointerup="finishResize"
+      @pointercancel="finishResize"
+    >
+      <span class="model-resize-handle__icon">
+        ↗
+      </span>
+    </button>
+  </div>
 </template>
 
 
 <style scoped>
+/*
+  ============================================================
+  LIVE2D STAGE
+  ============================================================
+*/
+
 .live2d-stage {
-  position: absolute;
+  position:
+    absolute;
 
-  inset: 0;
+  inset:
+    0;
 
-  width: 100%;
-  height: 100%;
+  width:
+    100%;
 
-  overflow: hidden;
+  height:
+    100%;
+
+  /*
+    QUAN TRỌNG:
+
+    Không dùng hidden ở DOM container,
+    nếu không resize button có thể
+    bị cắt ở mép.
+
+    Canvas Pixi vẫn có kích thước
+    500x700 riêng.
+  */
+  overflow:
+    visible;
 
   background:
     transparent;
+
+  -webkit-app-region:
+    no-drag;
+}
+
+
+/*
+  ============================================================
+  RESIZE HANDLE
+  ============================================================
+*/
+
+.model-resize-handle {
+  position:
+    absolute;
+
+  width:
+    32px;
+
+  height:
+    32px;
+
+  padding:
+    0;
+
+  display:
+    flex;
+
+  align-items:
+    center;
+
+  justify-content:
+    center;
+
+  transform:
+    translate(
+      -50%,
+      -50%
+    );
+
+  border:
+    2px solid
+    rgba(
+      255,
+      255,
+      255,
+      0.9
+    );
+
+  border-radius:
+    9px;
+
+  background:
+    rgba(
+      80,
+      65,
+      120,
+      0.88
+    );
+
+  color:
+    white;
+
+  box-shadow:
+    0 4px 14px
+    rgba(
+      0,
+      0,
+      0,
+      0.32
+    );
+
+  cursor:
+    nesw-resize;
+
+  z-index:
+    20000;
+
+  touch-action:
+    none;
+
+  user-select:
+    none;
+
+  pointer-events:
+    auto;
+
+  -webkit-app-region:
+    no-drag;
+
+  transition:
+    transform 120ms ease,
+    background 120ms ease;
+}
+
+
+.model-resize-handle:hover {
+  background:
+    rgba(
+      142,
+      78,
+      220,
+      0.95
+    );
+
+  transform:
+    translate(
+      -50%,
+      -50%
+    )
+    scale(
+      1.08
+    );
+}
+
+
+.model-resize-handle--active {
+  background:
+    rgba(
+      166,
+      91,
+      240,
+      1
+    );
+
+  transform:
+    translate(
+      -50%,
+      -50%
+    )
+    scale(
+      1.12
+    );
+}
+
+
+.model-resize-handle__icon {
+  display:
+    block;
+
+  font-size:
+    19px;
+
+  font-weight:
+    700;
+
+  line-height:
+    1;
+
+  pointer-events:
+    none;
 }
 </style>

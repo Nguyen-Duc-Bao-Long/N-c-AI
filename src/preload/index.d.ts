@@ -24,13 +24,27 @@ interface ImportedModelInfo {
   transform: ModelTransform
 }
 
-
 interface AppAPI {
   /*
     Cursor
   */
   getCursorPosition:
     () => Promise<CursorPosition>
+
+
+  /*
+    Mouse Passthrough
+
+    true:
+    click xuyên qua transparent window.
+
+    false:
+    Electron window nhận mouse event.
+  */
+  setIgnoreMouseEvents:
+    (
+      ignore: boolean
+    ) => void
 
 
   /*

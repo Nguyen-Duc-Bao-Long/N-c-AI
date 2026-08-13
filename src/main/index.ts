@@ -42,12 +42,6 @@ import {
 } from '@electron-toolkit/utils'
 
 
-/*
-  ============================================================
-  TYPES
-  ============================================================
-*/
-
 type ImportedModelInfo = {
   id: string
   name: string
@@ -121,14 +115,8 @@ type PreprocessResult = {
 
 /*
   ============================================================
-  CUSTOM LIVE2D PROTOCOL
+  LIVE2D CUSTOM PROTOCOL
   ============================================================
-
-  Ví dụ:
-
-  live2d-model://model-id/model.model3.json
-
-  Phải đăng ký trước app.ready.
 */
 
 protocol.registerSchemesAsPrivileged([
@@ -151,15 +139,20 @@ protocol.registerSchemesAsPrivileged([
   ============================================================
 */
 
-function getModelLibraryRoot(): string {
+function getModelLibraryRoot():
+  string {
   return join(
-    app.getPath('userData'),
+    app.getPath(
+      'userData'
+    ),
+
     'model-library'
   )
 }
 
 
-function getImportedModelsRoot(): string {
+function getImportedModelsRoot():
+  string {
   return join(
     getModelLibraryRoot(),
     'models'
@@ -167,7 +160,8 @@ function getImportedModelsRoot(): string {
 }
 
 
-function getModelIndexPath(): string {
+function getModelIndexPath():
+  string {
   return join(
     getModelLibraryRoot(),
     'index.json'
@@ -181,11 +175,14 @@ function getModelIndexPath(): string {
   ============================================================
 */
 
-async function ensureModelLibrary(): Promise<void> {
+async function ensureModelLibrary():
+  Promise<void> {
   await mkdir(
     getImportedModelsRoot(),
+
     {
-      recursive: true
+      recursive:
+        true
     }
   )
 }
@@ -197,7 +194,8 @@ async function ensureModelLibrary(): Promise<void> {
   ============================================================
 */
 
-async function readImportedModels(): Promise<ImportedModelInfo[]> {
+async function readImportedModels():
+  Promise<ImportedModelInfo[]> {
   await ensureModelLibrary()
 
 
@@ -227,10 +225,6 @@ async function readImportedModels(): Promise<ImportedModelInfo[]> {
     return parsed as ImportedModelInfo[]
   }
   catch {
-    /*
-      Lần đầu chạy có thể
-      chưa có index.json.
-    */
     return []
   }
 }
@@ -243,7 +237,8 @@ async function readImportedModels(): Promise<ImportedModelInfo[]> {
 */
 
 async function writeImportedModels(
-  models: ImportedModelInfo[]
+  models:
+    ImportedModelInfo[]
 ): Promise<void> {
   await ensureModelLibrary()
 
@@ -269,12 +264,15 @@ async function writeImportedModels(
 */
 
 function createModelId(
-  modelName: string
+  modelName:
+    string
 ): string {
   const slug =
     modelName
       .toLowerCase()
-      .normalize('NFKD')
+      .normalize(
+        'NFKD'
+      )
       .replace(
         /[\u0300-\u036f]/g,
         ''
@@ -290,7 +288,8 @@ function createModelId(
 
 
   return `${
-    slug || 'model'
+    slug ||
+    'model'
   }-${randomUUID()}`
 }
 
@@ -299,37 +298,34 @@ function createModelId(
   ============================================================
   FIND FILES RECURSIVELY
   ============================================================
-
-  Tìm file trong toàn bộ folder model.
-
-  Ví dụ:
-
-  expressions/EyesLove.exp3.json
-
-  animations/Love.motion3.json
-
-  motions/Happy.motion3.json
 */
 
 async function findFilesBySuffix(
-  directory: string,
-  suffix: string
+  directory:
+    string,
+
+  suffix:
+    string
 ): Promise<string[]> {
-  const result: string[] =
-    []
+  const result:
+    string[] =
+      []
 
 
   const entries =
     await readdir(
       directory,
+
       {
-        withFileTypes: true
+        withFileTypes:
+          true
       }
     )
 
 
   for (
-    const entry of entries
+    const entry
+    of entries
   ) {
     const fullPath =
       join(
@@ -338,9 +334,6 @@ async function findFilesBySuffix(
       )
 
 
-    /*
-      Nếu là folder thì tiếp tục scan.
-    */
     if (
       entry.isDirectory()
     ) {
@@ -360,15 +353,13 @@ async function findFilesBySuffix(
     }
 
 
-    /*
-      Nếu là file đúng suffix.
-    */
     if (
       entry.isFile() &&
       entry.name
         .toLowerCase()
         .endsWith(
-          suffix.toLowerCase()
+          suffix
+            .toLowerCase()
         )
     ) {
       result.push(
@@ -384,21 +375,16 @@ async function findFilesBySuffix(
 
 /*
   ============================================================
-  NORMALIZE MODEL PATH
+  MODEL RELATIVE PATH
   ============================================================
-
-  Windows:
-
-  expressions\EyesLove.exp3.json
-
-  Live2D:
-
-  expressions/EyesLove.exp3.json
 */
 
 function toModelRelativePath(
-  modelRoot: string,
-  absoluteFilePath: string
+  modelRoot:
+    string,
+
+  absoluteFilePath:
+    string
 ): string {
   return relative(
     modelRoot,
@@ -409,41 +395,51 @@ function toModelRelativePath(
   )
 }
 
+
+/*
+  ============================================================
+  EXPRESSION FOLDER MOTION
+  ============================================================
+*/
+
 function isExpressionFolderMotion(
-  modelRoot: string,
-  filePath: string
+  modelRoot:
+    string,
+
+  filePath:
+    string
 ): boolean {
   const relativePath =
     toModelRelativePath(
       modelRoot,
       filePath
-    ).toLowerCase()
+    )
+      .toLowerCase()
 
 
   return (
-    relativePath.startsWith(
-      'expressions/'
-    ) ||
-    relativePath.includes(
-      '/expressions/'
-    )
+    relativePath
+      .startsWith(
+        'expressions/'
+      ) ||
+
+    relativePath
+      .includes(
+        '/expressions/'
+      )
   )
 }
+
 
 /*
   ============================================================
   EXPRESSION NAME
   ============================================================
-
-  EyesLove.exp3.json
-
-        ↓
-
-  EyesLove
 */
 
 function getExpressionName(
-  filePath: string
+  filePath:
+    string
 ): string {
   return basename(
     filePath
@@ -458,32 +454,15 @@ function getExpressionName(
   ============================================================
   MOTION GROUP NAME
   ============================================================
-
-  Idle_2.motion3.json
-        ↓
-  Idle
-
-  Love.motion3.json
-        ↓
-  Love
-
-  Happy01.motion3.json
-        ↓
-  Happy
-
-  Happy_02.motion3.json
-        ↓
-  Happy
 */
 
 function getMotionGroupName(
-  modelRoot: string,
-  filePath: string
+  modelRoot:
+    string,
+
+  filePath:
+    string
 ): string {
-  /*
-    Lấy path tương đối để biết
-    motion nằm trong folder nào.
-  */
   const relativePath =
     toModelRelativePath(
       modelRoot,
@@ -506,65 +485,54 @@ function getMotionGroupName(
 
 
   /*
-    ==========================================================
-    MOTION NẰM TRONG EXPRESSIONS
-    ==========================================================
+    Motion trong expressions/
+    giữ nguyên tên file làm group.
 
     Ví dụ:
 
     expressions/hiyori_m01.motion3.json
-    expressions/hiyori_m02.motion3.json
 
-    Đây là các React motion.
-
-    QUAN TRỌNG:
-    Không gộp hiyori_m01, hiyori_m02
-    thành cùng một group hiyori_m.
-
-    Mỗi file sẽ có group riêng.
+    group:
+    hiyori_m01
   */
-
   if (
-    normalizedPath.startsWith(
-      'expressions/'
-    ) ||
-    normalizedPath.includes(
-      '/expressions/'
-    )
+    normalizedPath
+      .startsWith(
+        'expressions/'
+      ) ||
+
+    normalizedPath
+      .includes(
+        '/expressions/'
+      )
   ) {
     return fileName
   }
 
 
   /*
-    ==========================================================
-    IDLE
-    ==========================================================
+    Idle_1
+    Idle_2
+    Idle
+        ↓
+    Idle
   */
-
   if (
-    /^idle(?:[_ -]?\d+)?$/i.test(
-      fileName
-    )
+    /^idle(?:[_ -]?\d+)?$/i
+      .test(
+        fileName
+      )
   ) {
     return 'Idle'
   }
 
 
   /*
-    ==========================================================
-    MOTION THÔNG THƯỜNG
-    ==========================================================
-
     Happy01
-        ↓
-    Happy
-
     Happy_02
-        ↓
+       ↓
     Happy
   */
-
   const normalized =
     fileName.replace(
       /[_ -]?\d+$/i,
@@ -583,42 +551,33 @@ function getMotionGroupName(
   ============================================================
   PREPROCESS LIVE2D MODEL
   ============================================================
-
-  Model designer có thể giao model3.json
-  chưa khai báo Expressions / Motions.
-
-  App sẽ tự:
-
-  1. Scan *.exp3.json
-  2. Scan *.motion3.json
-  3. Thêm Expressions
-  4. Thêm Motions
-  5. Ghi lại model3.json
-
-  Chỉ sửa bản model đã copy vào
-  Model Library.
-
-  Model gốc của designer KHÔNG bị sửa.
 */
 
 async function preprocessLive2DModel(
-  modelRoot: string,
-  modelFilePath: string
+  modelRoot:
+    string,
+
+  modelFilePath:
+    string
 ): Promise<PreprocessResult> {
   console.log('')
+
 
   console.log(
     '============================================================'
   )
 
+
   console.log(
     '[Models] PREPROCESS START'
   )
+
 
   console.log(
     '[Models] Root:',
     modelRoot
   )
+
 
   console.log(
     '[Models] model3.json:',
@@ -628,7 +587,7 @@ async function preprocessLive2DModel(
 
   /*
     ----------------------------------------------------------
-    READ MODEL3.JSON
+    READ MODEL JSON
     ----------------------------------------------------------
   */
 
@@ -645,10 +604,6 @@ async function preprocessLive2DModel(
     ) as Model3Json
 
 
-  /*
-    Nếu FileReferences chưa tồn tại
-    thì tạo mới.
-  */
   if (
     !modelJson.FileReferences
   ) {
@@ -691,14 +646,9 @@ async function preprocessLive2DModel(
   )
 
 
-  /*
-    Expression cũ.
-
-    Nếu model3.json ban đầu đã có
-    expression thì giữ metadata bổ sung.
-  */
   const oldExpressions =
-    fileReferences.Expressions ??
+    fileReferences
+      .Expressions ??
     []
 
 
@@ -722,20 +672,18 @@ async function preprocessLive2DModel(
 
 
     oldExpressionMap.set(
-      expression.File.replace(
-        /\\/g,
-        '/'
-      ),
+      expression
+        .File
+        .replace(
+          /\\/g,
+          '/'
+        ),
 
       expression
     )
   }
 
 
-  /*
-    Rebuild Expressions dựa trên
-    file thực tế trong folder model.
-  */
   const expressions:
     Model3Expression[] =
       []
@@ -782,7 +730,8 @@ async function preprocessLive2DModel(
 
 
   if (
-    expressions.length > 0
+    expressions.length >
+    0
   ) {
     fileReferences.Expressions =
       expressions
@@ -822,10 +771,6 @@ async function preprocessLive2DModel(
   )
 
 
-  /*
-    Lưu metadata motion cũ
-    theo đường dẫn file.
-  */
   const oldMotionMap =
     new Map<
       string,
@@ -833,12 +778,6 @@ async function preprocessLive2DModel(
     >()
 
 
-  /*
-    Đồng thời lưu Group cũ.
-
-    Nếu designer đã khai báo group
-    đúng thì ưu tiên giữ group đó.
-  */
   const oldMotionGroupMap =
     new Map<
       string,
@@ -847,7 +786,8 @@ async function preprocessLive2DModel(
 
 
   const oldMotions =
-    fileReferences.Motions ??
+    fileReferences
+      .Motions ??
     {}
 
 
@@ -873,10 +813,12 @@ async function preprocessLive2DModel(
 
 
       const normalizedFile =
-        motion.File.replace(
-          /\\/g,
-          '/'
-        )
+        motion
+          .File
+          .replace(
+            /\\/g,
+            '/'
+          )
 
 
       oldMotionMap.set(
@@ -893,10 +835,6 @@ async function preprocessLive2DModel(
   }
 
 
-  /*
-    Rebuild Motion Groups
-    từ file thật trên disk.
-  */
   const motions:
     Record<
       string,
@@ -916,40 +854,38 @@ async function preprocessLive2DModel(
       )
 
 
-    /*
-      Nếu motion đã có group được
-      designer khai báo thì giữ nguyên.
-
-      Nếu chưa có thì tự suy luận
-      từ tên file.
-    */
     const inferredGroupName =
-  getMotionGroupName(
-    modelRoot,
-    motionFile
-  )
-
-
-/*
-  Motion nằm trong expressions/
-  luôn normalize lại.
-
-  Không giữ group cũ vì model có thể
-  đã được preprocess bằng phiên bản
-  code cũ.
-*/
-const groupName =
-  isExpressionFolderMotion(
-    modelRoot,
-    motionFile
-  )
-    ? inferredGroupName
-    : (
-        oldMotionGroupMap.get(
-          relativePath
-        ) ??
-        inferredGroupName
+      getMotionGroupName(
+        modelRoot,
+        motionFile
       )
+
+
+    /*
+      Motion trong expressions/
+      luôn sử dụng group suy luận
+      từ tên file.
+
+      Không dùng group cũ vì
+      model có thể đã được preprocess
+      bởi code cũ.
+    */
+    const groupName =
+      isExpressionFolderMotion(
+        modelRoot,
+        motionFile
+      )
+        ?
+        inferredGroupName
+
+        :
+        (
+          oldMotionGroupMap
+            .get(
+              relativePath
+            ) ??
+          inferredGroupName
+        )
 
 
     const oldMotion =
@@ -965,22 +901,14 @@ const groupName =
     ) {
       motions[
         groupName
-      ] = []
+      ] =
+        []
     }
 
 
     motions[
       groupName
     ].push({
-      /*
-        Giữ các field cũ như:
-
-        FadeInTime
-        FadeOutTime
-        Sound
-
-        nếu model đã khai báo.
-      */
       ...oldMotion,
 
       File:
@@ -995,134 +923,119 @@ const groupName =
 
 
   /*
-  ==========================================================
-  AUTO IDLE FALLBACK
-  ==========================================================
+    ==========================================================
+    AUTO IDLE FALLBACK
+    ==========================================================
 
-  Một số model VTube Studio không
-  cung cấp Idle motion riêng.
-
-  Nếu không có Idle, app sẽ lấy
-  một motion phù hợp làm baseline.
-
-  Thứ tự ưu tiên:
-
-  idle
-  neutral
-  default
-  standby
-  wait
-
-  Nếu không có tên nào phù hợp,
-  dùng motion đầu tiên.
-*/
-
-const hasIdle =
-  Array.isArray(
-    motions.Idle
-  ) &&
-  motions.Idle.length > 0
-
-
-if (
-  !hasIdle &&
-  motionFiles.length > 0
-) {
-  let fallbackMotionFile =
-    motionFiles.find(
-      (
-        file
-      ) => {
-        const name =
-          basename(
-            file
-          ).toLowerCase()
-
-
-        return (
-          name.includes(
-            'idle'
-          ) ||
-          name.includes(
-            'neutral'
-          ) ||
-          name.includes(
-            'default'
-          ) ||
-          name.includes(
-            'standby'
-          ) ||
-          name.includes(
-            'wait'
-          )
-        )
-      }
-    )
-
-
-  /*
-    Hiyori chỉ có:
-
-    hiyori_m01
-    hiyori_m02
-    ...
-
-    nên fallback về motion đầu tiên.
+    Nếu model không có Idle,
+    lấy một motion phù hợp làm baseline.
   */
-  fallbackMotionFile ??=
-    motionFiles[0]
+
+  const hasIdle =
+    Array.isArray(
+      motions.Idle
+    ) &&
+    motions.Idle.length >
+      0
 
 
   if (
-    fallbackMotionFile
+    !hasIdle &&
+    motionFiles.length >
+      0
   ) {
-    const fallbackRelativePath =
-      toModelRelativePath(
-        modelRoot,
-        fallbackMotionFile
+    let fallbackMotionFile =
+      motionFiles.find(
+        (
+          file
+        ) => {
+          const name =
+            basename(
+              file
+            )
+              .toLowerCase()
+
+
+          return (
+            name.includes(
+              'idle'
+            ) ||
+
+            name.includes(
+              'neutral'
+            ) ||
+
+            name.includes(
+              'default'
+            ) ||
+
+            name.includes(
+              'standby'
+            ) ||
+
+            name.includes(
+              'wait'
+            )
+          )
+        }
       )
 
 
-    const oldFallbackMotion =
-      oldMotionMap.get(
+    fallbackMotionFile ??=
+      motionFiles[0]
+
+
+    if (
+      fallbackMotionFile
+    ) {
+      const fallbackRelativePath =
+        toModelRelativePath(
+          modelRoot,
+          fallbackMotionFile
+        )
+
+
+      const oldFallbackMotion =
+        oldMotionMap.get(
+          fallbackRelativePath
+        )
+
+
+      motions.Idle = [
+        {
+          ...oldFallbackMotion,
+
+          File:
+            fallbackRelativePath
+        }
+      ]
+
+
+      console.warn(
+        '[Models] No Idle motion found.'
+      )
+
+
+      console.warn(
+        '[Models] Auto Idle fallback:',
         fallbackRelativePath
       )
-
-
-    motions.Idle = [
-      {
-        ...oldFallbackMotion,
-
-        File:
-          fallbackRelativePath
-      }
-    ]
-
-
-    console.warn(
-      '[Models] No Idle motion found.'
-    )
-
-
-    console.warn(
-      '[Models] Auto Idle fallback:',
-      fallbackRelativePath
-    )
+    }
   }
-}
 
 
-if (
-  Object.keys(
-    motions
-  ).length > 0
-) {
-  fileReferences.Motions =
-    motions
-}
-else {
-  delete fileReferences.Motions
-}
+  if (
+    Object.keys(
+      motions
+    ).length >
+    0
+  ) {
+    fileReferences.Motions =
+      motions
+  }
+  else {
+    delete fileReferences.Motions
+  }
 
 
   /*
@@ -1197,23 +1110,28 @@ else {
     '[Models] PREPROCESS RESULT'
   )
 
+
   console.log(
     '[Models] Expressions:',
     result.expressions
   )
+
 
   console.log(
     '[Models] Motion groups:',
     result.motionGroups
   )
 
+
   console.log(
     '[Models] PREPROCESS DONE'
   )
 
+
   console.log(
     '============================================================'
   )
+
 
   console.log('')
 
@@ -1226,12 +1144,6 @@ else {
   ============================================================
   REPAIR OLD IMPORTED MODELS
   ============================================================
-
-  Các model được import từ phiên bản
-  cũ có thể chưa được preprocess.
-
-  Mỗi lần app khởi động sẽ kiểm tra
-  và preprocess lại chúng.
 */
 
 async function repairImportedModels():
@@ -1241,11 +1153,13 @@ async function repairImportedModels():
 
 
   if (
-    models.length === 0
+    models.length ===
+    0
   ) {
     console.log(
       '[Models] No imported models to repair.'
     )
+
 
     return
   }
@@ -1257,7 +1171,8 @@ async function repairImportedModels():
 
 
   for (
-    const model of models
+    const model
+    of models
   ) {
     try {
       const modelUrl =
@@ -1286,6 +1201,7 @@ async function repairImportedModels():
           '[Models] Invalid model URL:',
           model.modelUrl
         )
+
 
         continue
       }
@@ -1317,10 +1233,6 @@ async function repairImportedModels():
       )
     }
     catch (error) {
-      /*
-        Một model lỗi không được
-        làm crash toàn app.
-      */
       console.error(
         `[Models] Could not repair "${model.name}":`,
         error
@@ -1342,41 +1254,41 @@ async function repairImportedModels():
 */
 
 async function importLive2DModel(
-  parentWindow: BrowserWindow
+  parentWindow:
+    BrowserWindow
 ): Promise<ImportedModelInfo | null> {
-  /*
-    Mở file picker.
-  */
   const result =
-    await dialog.showOpenDialog(
-      parentWindow,
-      {
-        title:
-          'Import Live2D Model',
+    await dialog
+      .showOpenDialog(
+        parentWindow,
 
-        buttonLabel:
-          'Import Model',
+        {
+          title:
+            'Import Live2D Model',
 
-        properties: [
-          'openFile'
-        ],
+          buttonLabel:
+            'Import Model',
 
-        filters: [
-          {
-            name:
-              'Live2D Model (*.model3.json)',
+          properties: [
+            'openFile'
+          ],
 
-            extensions: [
-              'json'
-            ]
-          }
-        ]
-      }
-    )
+          filters: [
+            {
+              name:
+                'Live2D Model (*.model3.json)',
+
+              extensions: [
+                'json'
+              ]
+            }
+          ]
+        }
+      )
 
 
   /*
-    User bấm Cancel.
+    User Cancel.
   */
   if (
     result.canceled ||
@@ -1388,7 +1300,9 @@ async function importLive2DModel(
 
 
   const selectedFile =
-    result.filePaths[0]
+    result.filePaths[
+      0
+    ]
 
 
   if (
@@ -1398,9 +1312,6 @@ async function importLive2DModel(
   }
 
 
-  /*
-    Chỉ chấp nhận *.model3.json.
-  */
   if (
     !selectedFile
       .toLowerCase()
@@ -1414,30 +1325,18 @@ async function importLive2DModel(
   }
 
 
-  /*
-    Folder model gốc.
-  */
   const sourceFolder =
     dirname(
       selectedFile
     )
 
 
-  /*
-    Ví dụ:
-    akari.model3.json
-  */
   const modelFileName =
     basename(
       selectedFile
     )
 
 
-  /*
-    akari.model3.json
-        ↓
-    akari
-  */
   const modelName =
     modelFileName.replace(
       /\.model3\.json$/i,
@@ -1445,18 +1344,12 @@ async function importLive2DModel(
     )
 
 
-  /*
-    ID riêng cho model.
-  */
   const id =
     createModelId(
       modelName
     )
 
 
-  /*
-    Folder đích trong userData.
-  */
   const destinationFolder =
     join(
       getImportedModelsRoot(),
@@ -1466,7 +1359,7 @@ async function importLive2DModel(
 
   /*
     ==========================================================
-    COPY + PREPROCESS
+    COPY MODEL
     ==========================================================
   */
 
@@ -1476,27 +1369,24 @@ async function importLive2DModel(
       sourceFolder
     )
 
+
     console.log(
       '[Models] Import destination:',
       destinationFolder
     )
 
 
-    /*
-      Copy nguyên folder model.
-    */
     await cp(
       sourceFolder,
       destinationFolder,
+
       {
-        recursive: true
+        recursive:
+          true
       }
     )
 
 
-    /*
-      model3.json trong bản đã copy.
-    */
     const importedModelFilePath =
       join(
         destinationFolder,
@@ -1504,9 +1394,6 @@ async function importLive2DModel(
       )
 
 
-    /*
-      Preprocess model.
-    */
     const preprocessResult =
       await preprocessLive2DModel(
         destinationFolder,
@@ -1532,15 +1419,15 @@ async function importLive2DModel(
     )
 
 
-    /*
-      Nếu lỗi thì xóa folder
-      import dở dang.
-    */
     await rm(
       destinationFolder,
+
       {
-        recursive: true,
-        force: true
+        recursive:
+          true,
+
+        force:
+          true
       }
     )
 
@@ -1584,9 +1471,7 @@ async function importLive2DModel(
 
 
   /*
-    ==========================================================
-    SAVE MODEL TO INDEX.JSON
-    ==========================================================
+    Save model index.
   */
 
   const models =
@@ -1617,39 +1502,32 @@ async function importLive2DModel(
   ============================================================
   DELETE IMPORTED MODEL
   ============================================================
-
-  Chỉ các model Imported nằm trong
-  index.json mới có thể bị xóa.
-
-  Akari built-in không nằm trong
-  index.json nên không bị xóa.
 */
 
 async function deleteImportedModel(
-  parentWindow: BrowserWindow,
-  modelId: string
+  parentWindow:
+    BrowserWindow,
+
+  modelId:
+    string
 ): Promise<boolean> {
   const models =
     await readImportedModels()
 
 
-  /*
-    Tìm model cần xóa.
-  */
   const model =
     models.find(
       (
         item
       ) =>
-        item.id === modelId
+        item.id ===
+        modelId
     )
 
 
   /*
-    Không tìm thấy model.
-
-    Có thể là built-in model
-    hoặc ID không hợp lệ.
+    Model không có trong index.json
+    → không cho xóa.
   */
   if (
     !model
@@ -1659,53 +1537,50 @@ async function deleteImportedModel(
       modelId
     )
 
+
     return false
   }
 
 
   /*
-    ==========================================================
-    CONFIRM DELETE
-    ==========================================================
+    Confirm.
   */
 
   const confirmation =
-    await dialog.showMessageBox(
-      parentWindow,
-      {
-        type:
-          'warning',
+    await dialog
+      .showMessageBox(
+        parentWindow,
 
-        title:
-          'Delete Model',
+        {
+          type:
+            'warning',
 
-        message:
-          `Delete "${model.name}"?`,
+          title:
+            'Delete Model',
 
-        detail:
-          'The imported copy of this Live2D model will be permanently removed from the application.',
+          message:
+            `Delete "${model.name}"?`,
 
-        buttons: [
-          'Cancel',
-          'Delete'
-        ],
+          detail:
+            'The imported copy of this Live2D model will be permanently removed from the application.',
 
-        defaultId:
-          0,
+          buttons: [
+            'Cancel',
+            'Delete'
+          ],
 
-        cancelId:
-          0,
+          defaultId:
+            0,
 
-        noLink:
-          true
-      }
-    )
+          cancelId:
+            0,
+
+          noLink:
+            true
+        }
+      )
 
 
-  /*
-    0 = Cancel
-    1 = Delete
-  */
   if (
     confirmation.response !==
     1
@@ -1715,13 +1590,14 @@ async function deleteImportedModel(
       model.name
     )
 
+
     return false
   }
 
 
   /*
     ==========================================================
-    MODEL FOLDER
+    SECURITY CHECK
     ==========================================================
   */
 
@@ -1738,13 +1614,6 @@ async function deleteImportedModel(
     )
 
 
-  /*
-    Security check.
-
-    Không cho ID kiểu:
-
-    ../../something
-  */
   const relativeModelPath =
     relative(
       modelsRoot,
@@ -1753,10 +1622,14 @@ async function deleteImportedModel(
 
 
   if (
-    relativeModelPath === '' ||
-    relativeModelPath.startsWith(
-      '..'
-    ) ||
+    relativeModelPath ===
+      '' ||
+
+    relativeModelPath
+      .startsWith(
+        '..'
+      ) ||
+
     isAbsolute(
       relativeModelPath
     )
@@ -1768,24 +1641,24 @@ async function deleteImportedModel(
 
 
   /*
-    ==========================================================
-    DELETE MODEL FOLDER
-    ==========================================================
+    Delete folder.
   */
 
   await rm(
     modelFolder,
+
     {
-      recursive: true,
-      force: true
+      recursive:
+        true,
+
+      force:
+        true
     }
   )
 
 
   /*
-    ==========================================================
-    REMOVE FROM INDEX.JSON
-    ==========================================================
+    Delete from index.
   */
 
   const remainingModels =
@@ -1793,7 +1666,8 @@ async function deleteImportedModel(
       (
         item
       ) =>
-        item.id !== modelId
+        item.id !==
+        modelId
     )
 
 
@@ -1814,7 +1688,7 @@ async function deleteImportedModel(
 
 /*
   ============================================================
-  MODEL PROTOCOL
+  LIVE2D MODEL PROTOCOL
   ============================================================
 */
 
@@ -1833,20 +1707,10 @@ function registerModelProtocol():
           )
 
 
-        /*
-          live2d-model://MODEL_ID/...
-        */
         const modelId =
           requestUrl.hostname
 
 
-        /*
-          /expressions/Love.exp3.json
-
-              ↓
-
-          expressions/Love.exp3.json
-        */
         const requestedPath =
           decodeURIComponent(
             requestUrl.pathname
@@ -1856,9 +1720,6 @@ function registerModelProtocol():
           )
 
 
-        /*
-          Folder root của model.
-        */
         const modelRoot =
           resolve(
             getImportedModelsRoot(),
@@ -1866,9 +1727,6 @@ function registerModelProtocol():
           )
 
 
-        /*
-          File được request.
-        */
         const filePath =
           resolve(
             modelRoot,
@@ -1877,9 +1735,8 @@ function registerModelProtocol():
 
 
         /*
-          ====================================================
-          PATH TRAVERSAL PROTECTION
-          ====================================================
+          Security:
+          không cho ../
         */
 
         const relativePath =
@@ -1890,25 +1747,26 @@ function registerModelProtocol():
 
 
         if (
-          relativePath.startsWith(
-            '..'
-          ) ||
+          relativePath
+            .startsWith(
+              '..'
+            ) ||
+
           isAbsolute(
             relativePath
           )
         ) {
           return new Response(
             'Forbidden',
+
             {
-              status: 403
+              status:
+                403
             }
           )
         }
 
 
-        /*
-          Load local file.
-        */
         return await net.fetch(
           pathToFileURL(
             filePath
@@ -1924,8 +1782,10 @@ function registerModelProtocol():
 
         return new Response(
           'Model file not found',
+
           {
-            status: 404
+            status:
+              404
           }
         )
       }
@@ -1938,14 +1798,99 @@ function registerModelProtocol():
   ============================================================
   IPC HANDLERS
   ============================================================
+
+  QUAN TRỌNG:
+
+  Không còn:
+
+  window:drag-start
+  window:drag-update
+  window:drag-end
+
+  BrowserWindow không di chuyển
+  trong lúc kéo character nữa.
 */
 
 function registerIpcHandlers():
   void {
   /*
-    ----------------------------------------------------------
-    CURSOR POSITION
-    ----------------------------------------------------------
+    ==========================================================
+    MOUSE PASSTHROUGH
+    ==========================================================
+
+    true:
+      click xuyên xuống desktop.
+
+    false:
+      Electron nhận mouse event.
+  */
+
+  ipcMain.on(
+    'window:set-ignore-mouse-events',
+
+    (
+      event,
+      ignore:
+        unknown
+    ) => {
+      if (
+        typeof ignore !==
+        'boolean'
+      ) {
+        return
+      }
+
+
+      const mainWindow =
+        BrowserWindow
+          .fromWebContents(
+            event.sender
+          )
+
+
+      if (
+        !mainWindow ||
+        mainWindow.isDestroyed()
+      ) {
+        return
+      }
+
+
+      /*
+        Khi ignore = true,
+        forward mouse move để renderer
+        vẫn có thể theo dõi cursor.
+      */
+      if (
+        ignore
+      ) {
+        mainWindow
+          .setIgnoreMouseEvents(
+            true,
+
+            {
+              forward:
+                true
+            }
+          )
+      }
+      else {
+        mainWindow
+          .setIgnoreMouseEvents(
+            false
+          )
+      }
+    }
+  )
+
+
+  /*
+    ==========================================================
+    CURSOR
+    ==========================================================
+
+    Trả cursor relative với
+    BrowserWindow full-screen.
   */
 
   ipcMain.handle(
@@ -1955,42 +1900,36 @@ function registerIpcHandlers():
       event
     ) => {
       const mainWindow =
-        BrowserWindow.fromWebContents(
-          event.sender
-        )
+        BrowserWindow
+          .fromWebContents(
+            event.sender
+          )
 
 
       if (
-        !mainWindow
+        !mainWindow ||
+        mainWindow.isDestroyed()
       ) {
         return {
-          x: 0,
-          y: 0
+          x:
+            0,
+
+          y:
+            0
         }
       }
 
 
-      /*
-        Vị trí cursor toàn desktop.
-      */
       const cursorPosition =
         electronScreen
           .getCursorScreenPoint()
 
 
-      /*
-        Vị trí window.
-      */
       const windowBounds =
         mainWindow
           .getContentBounds()
 
 
-      /*
-        Desktop coordinate
-            ↓
-        Window coordinate
-      */
       return {
         x:
           cursorPosition.x -
@@ -2005,9 +1944,9 @@ function registerIpcHandlers():
 
 
   /*
-    ----------------------------------------------------------
+    ==========================================================
     MODEL LIST
-    ----------------------------------------------------------
+    ==========================================================
   */
 
   ipcMain.handle(
@@ -2020,9 +1959,9 @@ function registerIpcHandlers():
 
 
   /*
-    ----------------------------------------------------------
+    ==========================================================
     IMPORT MODEL
-    ----------------------------------------------------------
+    ==========================================================
   */
 
   ipcMain.handle(
@@ -2032,13 +1971,15 @@ function registerIpcHandlers():
       event
     ) => {
       const mainWindow =
-        BrowserWindow.fromWebContents(
-          event.sender
-        )
+        BrowserWindow
+          .fromWebContents(
+            event.sender
+          )
 
 
       if (
-        !mainWindow
+        !mainWindow ||
+        mainWindow.isDestroyed()
       ) {
         return null
       }
@@ -2063,9 +2004,9 @@ function registerIpcHandlers():
 
 
   /*
-    ----------------------------------------------------------
+    ==========================================================
     DELETE MODEL
-    ----------------------------------------------------------
+    ==========================================================
   */
 
   ipcMain.handle(
@@ -2073,11 +2014,9 @@ function registerIpcHandlers():
 
     async (
       event,
-      modelId: unknown
+      modelId:
+        unknown
     ) => {
-      /*
-        Chỉ nhận string.
-      */
       if (
         typeof modelId !==
         'string'
@@ -2087,13 +2026,15 @@ function registerIpcHandlers():
 
 
       const mainWindow =
-        BrowserWindow.fromWebContents(
-          event.sender
-        )
+        BrowserWindow
+          .fromWebContents(
+            event.sender
+          )
 
 
       if (
-        !mainWindow
+        !mainWindow ||
+        mainWindow.isDestroyed()
       ) {
         return false
       }
@@ -2119,8 +2060,9 @@ function registerIpcHandlers():
 
 
   /*
-    Electron template IPC test.
+    Electron template ping.
   */
+
   ipcMain.on(
     'ping',
 
@@ -2137,65 +2079,105 @@ function registerIpcHandlers():
   ============================================================
   CREATE WINDOW
   ============================================================
+
+  BrowserWindow giờ phủ toàn màn hình.
+
+  Nó KHÔNG di chuyển.
+
+  App.vue sau này sẽ có:
+
+  character-shell 500x700
+
+  và chỉ di chuyển character-shell
+  bằng transform.
 */
 
 function createWindow():
   void {
+  const primaryDisplay =
+    electronScreen
+      .getPrimaryDisplay()
+
+
+  const displayBounds =
+    primaryDisplay.bounds
+
+
   const mainWindow =
     new BrowserWindow({
+      /*
+        Full monitor.
+      */
+      x:
+        displayBounds.x,
+
+      y:
+        displayBounds.y,
+
       width:
-        500,
+        displayBounds.width,
 
       height:
-        700,
+        displayBounds.height,
+
 
       /*
-        Show sau khi renderer ready.
+        Không hiện cho đến khi
+        renderer load xong.
       */
       show:
         false,
 
+
       /*
-        Không title bar.
+        Transparent frameless.
       */
       frame:
         false,
 
-      /*
-        Transparent background.
-      */
       transparent:
         true,
 
+
       /*
-        Hiện tại không resize.
+        Window đứng yên.
       */
       resizable:
         false,
 
-      /*
-        Không shadow Windows.
-      */
+      movable:
+        false,
+
+      fullscreenable:
+        false,
+
+
       hasShadow:
         false,
 
+
       /*
-        Character luôn ở trên.
+        Desktop companion luôn nổi.
       */
       alwaysOnTop:
         true,
 
+
       /*
-        Không menu mặc định.
+        Không hiện host full-screen
+        trên taskbar.
       */
+      skipTaskbar:
+        true,
+
+
       autoHideMenuBar:
         true,
 
-      /*
-        Background trong suốt.
-      */
+
       backgroundColor:
         '#00000000',
+
 
       webPreferences: {
         preload:
@@ -2211,8 +2193,31 @@ function createWindow():
 
 
   /*
-    Khi renderer ready mới show.
+    Ban đầu click xuyên desktop.
+
+    App.vue sẽ bật lại mouse event
+    khi cursor vào:
+    - character drag zone
+    - resize handle
+    - buttons
+    - panels
   */
+
+  mainWindow
+    .setIgnoreMouseEvents(
+      true,
+
+      {
+        forward:
+          true
+      }
+    )
+
+
+  /*
+    Show khi renderer ready.
+  */
+
   mainWindow.on(
     'ready-to-show',
 
@@ -2225,14 +2230,17 @@ function createWindow():
   /*
     Link ngoài mở bằng browser.
   */
-  mainWindow.webContents
+
+  mainWindow
+    .webContents
     .setWindowOpenHandler(
       (
         details
       ) => {
-        void shell.openExternal(
-          details.url
-        )
+        void shell
+          .openExternal(
+            details.url
+          )
 
 
         return {
@@ -2244,31 +2252,34 @@ function createWindow():
 
 
   /*
-    Development:
-    Vite dev server.
-
-    Production:
-    renderer/index.html
+    Development.
   */
+
   if (
     is.dev &&
     process.env[
       'ELECTRON_RENDERER_URL'
     ]
   ) {
-    void mainWindow.loadURL(
-      process.env[
-        'ELECTRON_RENDERER_URL'
-      ]
-    )
+    void mainWindow
+      .loadURL(
+        process.env[
+          'ELECTRON_RENDERER_URL'
+        ]
+      )
   }
   else {
-    void mainWindow.loadFile(
-      join(
-        __dirname,
-        '../renderer/index.html'
+    /*
+      Production.
+    */
+
+    void mainWindow
+      .loadFile(
+        join(
+          __dirname,
+          '../renderer/index.html'
+        )
       )
-    )
   }
 }
 
@@ -2279,86 +2290,94 @@ function createWindow():
   ============================================================
 */
 
-app.whenReady().then(
-  async () => {
-    /*
-      Windows App ID.
-    */
-    electronApp
-      .setAppUserModelId(
-        'com.electron'
+app
+  .whenReady()
+  .then(
+    async () => {
+      /*
+        Windows App ID.
+      */
+
+      electronApp
+        .setAppUserModelId(
+          'com.electron'
+        )
+
+
+      /*
+        Model Library.
+      */
+
+      await ensureModelLibrary()
+
+
+      /*
+        Repair imported models.
+      */
+
+      await repairImportedModels()
+
+
+      /*
+        Register custom protocol.
+      */
+
+      registerModelProtocol()
+
+
+      /*
+        Register IPC.
+      */
+
+      registerIpcHandlers()
+
+
+      /*
+        Electron toolkit shortcuts.
+      */
+
+      app.on(
+        'browser-window-created',
+
+        (
+          _,
+          window
+        ) => {
+          optimizer
+            .watchWindowShortcuts(
+              window
+            )
+        }
       )
 
 
-    /*
-      Đảm bảo Model Library tồn tại.
-    */
-    await ensureModelLibrary()
+      /*
+        Create main window.
+      */
+
+      createWindow()
 
 
-    /*
-      Repair các model đã import
-      từ phiên bản cũ.
-    */
-    await repairImportedModels()
+      /*
+        macOS activate.
+      */
 
+      app.on(
+        'activate',
 
-    /*
-      Register live2d-model://
-    */
-    registerModelProtocol()
-
-
-    /*
-      Register IPC.
-    */
-    registerIpcHandlers()
-
-
-    /*
-      Electron toolkit shortcuts.
-    */
-    app.on(
-      'browser-window-created',
-
-      (
-        _,
-        window
-      ) => {
-        optimizer
-          .watchWindowShortcuts(
-            window
-          )
-      }
-    )
-
-
-    /*
-      Tạo main window.
-    */
-    createWindow()
-
-
-    /*
-      macOS:
-      click Dock để mở lại app.
-    */
-    app.on(
-      'activate',
-
-      () => {
-        if (
-          BrowserWindow
-            .getAllWindows()
-            .length ===
-          0
-        ) {
-          createWindow()
+        () => {
+          if (
+            BrowserWindow
+              .getAllWindows()
+              .length ===
+            0
+          ) {
+            createWindow()
+          }
         }
-      }
-    )
-  }
-)
+      )
+    }
+  )
 
 
 /*
@@ -2371,10 +2390,6 @@ app.on(
   'window-all-closed',
 
   () => {
-    /*
-      macOS thường giữ app chạy
-      khi đóng hết window.
-    */
     if (
       process.platform !==
       'darwin'

@@ -28,10 +28,31 @@ interface ImportedModelInfo {
 
 
 interface AppAPI {
+  /*
+    Cursor
+  */
   getCursorPosition:
     () => Promise<CursorPosition>
 
 
+  /*
+    Mouse Passthrough
+
+    true:
+    click xuyên qua transparent window.
+
+    false:
+    Electron window nhận mouse event.
+  */
+  setIgnoreMouseEvents:
+    (
+      ignore: boolean
+    ) => void
+
+
+  /*
+    Model Library
+  */
   listModels:
     () => Promise<
       ImportedModelInfo[]
@@ -44,6 +65,9 @@ interface AppAPI {
     >
 
 
+  /*
+    Delete imported model.
+  */
   deleteModel:
     (
       id: string

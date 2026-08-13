@@ -34,7 +34,7 @@
     "@proj-airi/unplugin-live2d-sdk": "0.1.6",
     "@types/node": "^22.19.1",
     "@vitejs/plugin-vue": "^6.0.2",
-    "electron": "^39.2.6",
+    "electron": "43.4.0",
     "electron-builder": "^26.0.12",
     "electron-vite": "^5.0.0",
     "eslint": "^9.39.1",

@@ -8,6 +8,12 @@ import {
 } from '@electron-toolkit/preload'
 
 
+/*
+  ============================================================
+  APP API
+  ============================================================
+*/
+
 const api = {
   /*
     ==========================================================
@@ -15,10 +21,39 @@ const api = {
     ==========================================================
   */
 
-  getCursorPosition: () =>
-    ipcRenderer.invoke(
-      'cursor:get-position'
-    ),
+  getCursorPosition:
+    () =>
+      ipcRenderer.invoke(
+        'cursor:get-position'
+      ),
+
+
+  /*
+    ==========================================================
+    MOUSE PASSTHROUGH
+    ==========================================================
+
+    ignore = true
+      → Electron window bỏ qua mouse click
+      → click xuyên xuống desktop/app bên dưới.
+
+    ignore = false
+      → Electron window nhận mouse event.
+
+    Dùng cho kiến trúc mới:
+    BrowserWindow full-screen transparent
+    nhưng chỉ character / controls nhận chuột.
+  */
+
+  setIgnoreMouseEvents:
+    (
+      ignore: boolean
+    ): void => {
+      ipcRenderer.send(
+        'window:set-ignore-mouse-events',
+        ignore
+      )
+    },
 
 
   /*
@@ -27,36 +62,55 @@ const api = {
     ==========================================================
   */
 
-  listModels: () =>
-    ipcRenderer.invoke(
-      'models:list'
-    ),
+  listModels:
+    () =>
+      ipcRenderer.invoke(
+        'models:list'
+      ),
 
 
-  importModel: () =>
-    ipcRenderer.invoke(
-      'models:import'
-    ),
+  importModel:
+    () =>
+      ipcRenderer.invoke(
+        'models:import'
+      ),
 
 
   /*
-    Xóa model imported.
+    ==========================================================
+    DELETE IMPORTED MODEL
+    ==========================================================
 
     Renderer:
+
       window.api.deleteModel(id)
 
-           ↓
+            ↓
+
+    Preload:
+
+      ipcRenderer.invoke(
+        'models:delete',
+        id
+      )
+
+            ↓
 
     Main:
-      ipcMain.handle('models:delete')
+
+      ipcMain.handle(
+        'models:delete'
+      )
   */
-  deleteModel: (
-    id: string
-  ) =>
-    ipcRenderer.invoke(
-      'models:delete',
-      id
-    )
+
+  deleteModel:
+    (
+      id: string
+    ) =>
+      ipcRenderer.invoke(
+        'models:delete',
+        id
+      )
 }
 
 
@@ -70,6 +124,9 @@ if (
   process.contextIsolated
 ) {
   try {
+    /*
+      Electron Toolkit API.
+    */
     contextBridge
       .exposeInMainWorld(
         'electron',
@@ -77,6 +134,9 @@ if (
       )
 
 
+    /*
+      API riêng của project.
+    */
     contextBridge
       .exposeInMainWorld(
         'api',
@@ -85,14 +145,21 @@ if (
   }
   catch (error) {
     console.error(
+      '[Preload] Failed to expose API:',
       error
     )
   }
 }
 else {
+  /*
+    Fallback khi contextIsolation
+    bị tắt.
+  */
+
   // @ts-ignore
   window.electron =
     electronAPI
+
 
   // @ts-ignore
   window.api =
