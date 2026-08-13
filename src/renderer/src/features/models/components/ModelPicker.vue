@@ -1,39 +1,82 @@
 <script setup lang="ts">
 import type {
   CharacterConfig
-} from '../../../characters/types'
+} from '@renderer/characters/types'
 
 
-const props = defineProps<{
-  models: CharacterConfig[]
+const props =
+  defineProps<{
+    models:
+      CharacterConfig[]
 
-  selectedId: string
+    selectedId:
+      string
 
-  defaultId: string
+    defaultId:
+      string
 
-  importing: boolean
-}>()
+    importing:
+      boolean
+
+    /*
+      Chỉ ID nằm trong đây
+      mới có nút delete.
+
+      Akari built-in sẽ không
+      nằm trong deletableIds.
+    */
+    deletableIds:
+      string[]
+
+    /*
+      ID model đang xóa.
+    */
+    deletingId:
+      string | null
+  }>()
 
 
-const emit = defineEmits<{
-  select: [model: CharacterConfig]
+const emit =
+  defineEmits<{
+    (
+      event:
+        'select',
 
-  import: []
+      model:
+        CharacterConfig
+    ): void
 
-  close: []
-}>()
+
+    (
+      event:
+        'import'
+    ): void
 
 
-function getInitial(
-  name: string
-): string {
-  return (
-    name
-      .trim()
-      .charAt(0)
-      .toUpperCase() ||
-    '?'
-  )
+    (
+      event:
+        'delete',
+
+      model:
+        CharacterConfig
+    ): void
+
+
+    (
+      event:
+        'close'
+    ): void
+  }>()
+
+
+function canDelete(
+  modelId: string
+): boolean {
+  return props
+    .deletableIds
+    .includes(
+      modelId
+    )
 }
 </script>
 
@@ -41,115 +84,198 @@ function getInitial(
 <template>
   <div
     class="model-picker"
-    @pointerdown.stop
+    @click.stop
   >
-    <!-- HEADER -->
-    <div class="model-picker-header">
-      <div>
-        <div class="model-picker-title">
+    <!-- ==================================================
+         HEADER
+         ================================================== -->
+    <div class="picker-header">
+      <div class="title-area">
+        <h2>
           Models
-        </div>
+        </h2>
 
-        <div class="model-picker-subtitle">
+        <p>
           Choose your character
-        </div>
+        </p>
       </div>
 
+
       <button
-        class="close-button"
         type="button"
-        @click="emit('close')"
+        class="close-button"
+        title="Close"
+        @click="
+          emit('close')
+        "
       >
         ×
       </button>
     </div>
 
 
-    <!-- MODEL LIST -->
+    <!-- ==================================================
+         MODEL LIST
+         ================================================== -->
     <div class="model-list">
-
-      <button
-        v-for="model in props.models"
-        :key="model.id"
+      <div
+        v-for="
+          model in models
+        "
+        :key="
+          model.id
+        "
         class="model-item"
         :class="{
           selected:
-            model.id ===
-            props.selectedId
+            selectedId ===
+            model.id
         }"
-        type="button"
-        @click="
-          emit(
-            'select',
-            model
-          )
-        "
       >
-        <!-- Avatar placeholder -->
-        <div class="model-avatar">
-          {{
-            getInitial(
-              model.name
+        <!--
+          Phần click để SELECT MODEL.
+        -->
+        <button
+          type="button"
+          class="model-select-button"
+          @click="
+            emit(
+              'select',
+              model
             )
-          }}
-        </div>
-
-
-        <div class="model-info">
-          <div class="model-name">
-            {{ model.name }}
-          </div>
-
-          <div
-            v-if="
-              model.id ===
-              props.defaultId
-            "
-            class="model-badge"
-          >
-            Default
-          </div>
-
-          <div
-            v-else
-            class="model-type"
-          >
-            Imported
-          </div>
-        </div>
-
-
-        <div
-          v-if="
-            model.id ===
-            props.selectedId
           "
-          class="selected-mark"
         >
-          ✓
-        </div>
-      </button>
+          <!-- AVATAR -->
+          <div class="model-avatar">
+            {{
+              model.name
+                .charAt(0)
+                .toUpperCase()
+            }}
+          </div>
 
+
+          <!-- MODEL INFO -->
+          <div class="model-info">
+            <strong>
+              {{
+                model.name
+              }}
+            </strong>
+
+
+            <span
+              v-if="
+                model.id ===
+                defaultId
+              "
+              class="
+                model-badge
+                default-badge
+              "
+            >
+              Default
+            </span>
+
+
+            <span
+              v-else-if="
+                canDelete(
+                  model.id
+                )
+              "
+              class="
+                model-badge
+                imported-badge
+              "
+            >
+              Imported
+            </span>
+          </div>
+        </button>
+
+
+        <!-- ==================================================
+             RIGHT SIDE ACTIONS
+             ================================================== -->
+        <div class="model-actions">
+          <!-- DELETE BUTTON -->
+          <button
+            v-if="
+              canDelete(
+                model.id
+              )
+            "
+            type="button"
+            class="delete-button"
+            :disabled="
+              deletingId ===
+              model.id
+            "
+            :title="
+              `Delete ${model.name}`
+            "
+            @click.stop="
+              emit(
+                'delete',
+                model
+              )
+            "
+          >
+            <span
+              v-if="
+                deletingId !==
+                model.id
+              "
+            >
+              ×
+            </span>
+
+            <span v-else>
+              …
+            </span>
+          </button>
+
+
+          <!-- CURRENT MODEL -->
+          <span
+            v-if="
+              selectedId ===
+              model.id
+            "
+            class="selected-check"
+          >
+            ✓
+          </span>
+        </div>
+      </div>
     </div>
 
 
-    <div class="separator" />
+    <!-- DIVIDER -->
+    <div class="divider" />
 
 
-    <!-- IMPORT -->
+    <!-- ==================================================
+         IMPORT MODEL
+         ================================================== -->
     <button
-      class="import-button"
       type="button"
-      :disabled="props.importing"
-      @click="emit('import')"
+      class="import-button"
+      :disabled="
+        importing
+      "
+      @click="
+        emit('import')
+      "
     >
-      <span class="import-icon">
+      <span class="plus">
         +
       </span>
 
       <span>
         {{
-          props.importing
+          importing
             ? 'Importing...'
             : 'Import Model'
         }}
@@ -157,119 +283,119 @@ function getInitial(
     </button>
 
 
-    <div class="import-help">
+    <p class="import-hint">
       Select a Live2D
       <strong>.model3.json</strong>
       file.
-    </div>
+    </p>
   </div>
 </template>
 
 
 <style scoped>
 .model-picker {
-  width: 235px;
+  width: 290px;
 
-  max-height: 430px;
+  box-sizing: border-box;
 
-  padding: 14px;
+  padding: 18px;
 
   border:
     1px solid
-    rgba(
-      255,
-      255,
-      255,
-      0.16
-    );
+    rgba(255, 255, 255, 0.15);
 
-  border-radius: 20px;
+  border-radius: 24px;
 
   background:
-    rgba(
-      20,
-      20,
-      30,
-      0.94
-    );
-
-  box-shadow:
-    0 12px 40px
-    rgba(
-      0,
-      0,
-      0,
-      0.42
-    );
+    rgba(18, 17, 29, 0.95);
 
   backdrop-filter:
-    blur(18px);
+    blur(20px);
+
+  box-shadow:
+    0 18px 50px
+    rgba(0, 0, 0, 0.45);
 
   color: white;
 
   -webkit-app-region:
     no-drag;
-
-  user-select:
-    none;
 }
 
 
-.model-picker-header {
+/*
+  ============================================================
+  HEADER
+  ============================================================
+*/
+
+.picker-header {
   display: flex;
 
-  align-items: center;
+  align-items:
+    flex-start;
 
   justify-content:
     space-between;
 
-  margin-bottom: 12px;
+  gap: 12px;
 }
 
 
-.model-picker-title {
-  font-size: 18px;
+.title-area h2 {
+  margin: 0;
 
-  font-weight: 800;
+  font-size: 24px;
+
+  line-height: 1;
 }
 
 
-.model-picker-subtitle {
-  margin-top: 2px;
+.title-area p {
+  margin:
+    6px 0 0;
 
   color:
-    rgba(
-      255,
-      255,
-      255,
-      0.5
-    );
+    rgba(255, 255, 255, 0.55);
 
-  font-size: 10px;
+  font-size: 12px;
 }
 
 
 .close-button {
-  width: 30px;
-  height: 30px;
+  width: 38px;
+  height: 38px;
 
-  border: none;
+  display: flex;
+
+  align-items: center;
+
+  justify-content: center;
+
+  flex-shrink: 0;
+
+  padding: 0;
+
+  border: 0;
 
   border-radius: 50%;
 
   background:
-    rgba(
-      255,
-      255,
-      255,
-      0.08
-    );
+    rgba(255, 255, 255, 0.07);
 
   color: white;
 
-  font-size: 20px;
+  font-size: 24px;
+
+  font-weight: 600;
+
+  line-height: 1;
 
   cursor: pointer;
+
+  transition:
+    background 0.15s ease,
+    transform 0.15s ease;
 
   -webkit-app-region:
     no-drag;
@@ -278,56 +404,96 @@ function getInitial(
 
 .close-button:hover {
   background:
-    rgba(
-      255,
-      255,
-      255,
-      0.16
-    );
+    rgba(255, 255, 255, 0.14);
+
+  transform:
+    scale(1.05);
 }
 
 
+/*
+  ============================================================
+  MODEL LIST
+  ============================================================
+*/
+
 .model-list {
-  max-height: 260px;
-
-  overflow-y: auto;
-
   display: flex;
 
   flex-direction: column;
 
-  gap: 6px;
+  gap: 10px;
+
+  margin-top: 18px;
 }
 
 
 .model-item {
-  width: 100%;
+  min-height: 72px;
 
-  min-height: 58px;
+  display: flex;
 
-  padding:
-    7px
-    9px;
+  align-items: center;
+
+  box-sizing: border-box;
+
+  overflow: hidden;
 
   border:
     1px solid
     transparent;
 
-  border-radius: 14px;
+  border-radius: 18px;
 
   background:
-    rgba(
-      255,
-      255,
-      255,
-      0.04
-    );
+    rgba(255, 255, 255, 0.055);
 
-  color: white;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
+}
+
+
+.model-item:hover {
+  background:
+    rgba(255, 255, 255, 0.09);
+}
+
+
+.model-item.selected {
+  border-color:
+    rgba(142, 93, 255, 0.95);
+
+  background:
+    rgba(103, 66, 189, 0.28);
+}
+
+
+/*
+  Phần chính để chọn model.
+*/
+.model-select-button {
+  min-width: 0;
+
+  flex: 1;
 
   display: flex;
 
   align-items: center;
+
+  gap: 12px;
+
+  align-self: stretch;
+
+  padding:
+    10px 4px 10px 10px;
+
+  border: 0;
+
+  background:
+    transparent;
+
+  color: white;
 
   text-align: left;
 
@@ -335,55 +501,21 @@ function getInitial(
 
   -webkit-app-region:
     no-drag;
-
-  transition:
-    background 120ms ease,
-    border 120ms ease,
-    transform 120ms ease;
 }
 
 
-.model-item:hover {
-  background:
-    rgba(
-      255,
-      255,
-      255,
-      0.09
-    );
-
-  transform:
-    translateX(2px);
-}
-
-
-.model-item.selected {
-  border-color:
-    rgba(
-      150,
-      100,
-      255,
-      0.72
-    );
-
-  background:
-    rgba(
-      120,
-      75,
-      220,
-      0.22
-    );
-}
-
+/*
+  ============================================================
+  AVATAR
+  ============================================================
+*/
 
 .model-avatar {
-  width: 40px;
-  height: 40px;
+  width: 50px;
+  height: 50px;
 
   flex:
-    0 0 40px;
-
-  border-radius: 12px;
+    0 0 50px;
 
   display: flex;
 
@@ -391,179 +523,273 @@ function getInitial(
 
   justify-content: center;
 
-  background:
-    linear-gradient(
-      135deg,
-      rgba(
-        130,
-        90,
-        255,
-        1
-      ),
-      rgba(
-        235,
-        85,
-        180,
-        1
-      )
-    );
-
-  font-size: 17px;
-
-  font-weight: 800;
-}
-
-
-.model-info {
-  min-width: 0;
-
-  flex: 1;
-
-  margin-left: 10px;
-}
-
-
-.model-name {
-  overflow: hidden;
-
-  text-overflow:
-    ellipsis;
-
-  white-space:
-    nowrap;
-
-  font-size: 13px;
-
-  font-weight: 700;
-}
-
-
-.model-badge {
-  display: inline-block;
-
-  margin-top: 3px;
-
-  padding:
-    2px
-    6px;
-
-  border-radius: 8px;
-
-  background:
-    rgba(
-      90,
-      205,
-      135,
-      0.16
-    );
-
-  color:
-    rgb(
-      130,
-      235,
-      165
-    );
-
-  font-size: 9px;
-}
-
-
-.model-type {
-  margin-top: 3px;
-
-  color:
-    rgba(
-      255,
-      255,
-      255,
-      0.42
-    );
-
-  font-size: 9px;
-}
-
-
-.selected-mark {
-  margin-left: 8px;
-
-  color:
-    rgb(
-      170,
-      130,
-      255
-    );
-
-  font-size: 17px;
-
-  font-weight: 800;
-}
-
-
-.separator {
-  height: 1px;
-
-  margin:
-    12px
-    0;
-
-  background:
-    rgba(
-      255,
-      255,
-      255,
-      0.10
-    );
-}
-
-
-.import-button {
-  width: 100%;
-
-  height: 44px;
-
-  border:
-    1px solid
-    rgba(
-      160,
-      120,
-      255,
-      0.42
-    );
-
-  border-radius: 13px;
+  border-radius: 15px;
 
   background:
     linear-gradient(
       135deg,
-      rgba(
-        100,
-        70,
-        210,
-        0.72
-      ),
-      rgba(
-        180,
-        65,
-        165,
-        0.72
-      )
+      #8758e8,
+      #d64db7
     );
 
   color: white;
 
+  font-size: 21px;
+
+  font-weight: 700;
+}
+
+
+/*
+  ============================================================
+  MODEL INFO
+  ============================================================
+*/
+
+.model-info {
+  min-width: 0;
+
+  display: flex;
+
+  flex-direction: column;
+
+  align-items:
+    flex-start;
+
+  gap: 5px;
+}
+
+
+.model-info strong {
+  max-width: 120px;
+
+  overflow: hidden;
+
+  text-overflow: ellipsis;
+
+  white-space: nowrap;
+
+  font-size: 16px;
+}
+
+
+.model-badge {
+  display: inline-flex;
+
+  align-items: center;
+
+  padding:
+    2px 7px;
+
+  border-radius:
+    999px;
+
+  font-size: 10px;
+
+  line-height: 1.2;
+}
+
+
+.default-badge {
+  background:
+    rgba(82, 196, 111, 0.25);
+
+  color:
+    #a3f3ad;
+}
+
+
+.imported-badge {
+  background:
+    rgba(255, 255, 255, 0.08);
+
+  color:
+    rgba(255, 255, 255, 0.5);
+}
+
+
+/*
+  ============================================================
+  MODEL RIGHT ACTIONS
+  ============================================================
+*/
+
+.model-actions {
+  flex:
+    0 0 auto;
+
+  display: flex;
+
+  align-items: center;
+
+  gap: 7px;
+
+  padding-right: 10px;
+}
+
+
+/*
+  ============================================================
+  DELETE
+  ============================================================
+*/
+
+.delete-button {
+  width: 30px;
+  height: 30px;
+
   display: flex;
 
   align-items: center;
 
   justify-content: center;
 
-  gap: 7px;
+  padding: 0;
 
-  font-size: 12px;
+  border:
+    1px solid
+    rgba(255, 76, 96, 0.34);
+
+  border-radius: 9px;
+
+  background:
+    rgba(255, 55, 78, 0.09);
+
+  color:
+    #ff576d;
+
+  font-size: 21px;
+
+  font-weight: 700;
+
+  line-height: 1;
+
+  cursor: pointer;
+
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    transform 0.15s ease;
+
+  -webkit-app-region:
+    no-drag;
+}
+
+
+.delete-button:hover:not(
+  :disabled
+) {
+  background:
+    rgba(255, 55, 78, 0.22);
+
+  border-color:
+    rgba(255, 86, 105, 0.8);
+
+  transform:
+    scale(1.07);
+}
+
+
+.delete-button:active:not(
+  :disabled
+) {
+  transform:
+    scale(0.95);
+}
+
+
+.delete-button:disabled {
+  opacity: 0.4;
+
+  cursor: default;
+}
+
+
+/*
+  ============================================================
+  SELECTED CHECK
+  ============================================================
+*/
+
+.selected-check {
+  width: 20px;
+
+  flex:
+    0 0 20px;
+
+  color:
+    #aa83ff;
+
+  font-size: 23px;
+
+  font-weight: 700;
+
+  text-align: center;
+}
+
+
+/*
+  ============================================================
+  DIVIDER
+  ============================================================
+*/
+
+.divider {
+  height: 1px;
+
+  margin:
+    16px 0;
+
+  background:
+    rgba(255, 255, 255, 0.13);
+}
+
+
+/*
+  ============================================================
+  IMPORT BUTTON
+  ============================================================
+*/
+
+.import-button {
+  width: 100%;
+
+  height: 55px;
+
+  display: flex;
+
+  align-items: center;
+
+  justify-content: center;
+
+  gap: 9px;
+
+  padding: 0;
+
+  border:
+    1px solid
+    rgba(180, 130, 255, 0.55);
+
+  border-radius: 16px;
+
+  background:
+    linear-gradient(
+      135deg,
+      rgba(100, 64, 190, 0.95),
+      rgba(161, 62, 157, 0.95)
+    );
+
+  color: white;
+
+  font-size: 15px;
 
   font-weight: 700;
 
   cursor: pointer;
+
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease;
 
   -webkit-app-region:
     no-drag;
@@ -573,38 +799,34 @@ function getInitial(
 .import-button:hover:not(
   :disabled
 ) {
-  filter:
-    brightness(1.15);
+  transform:
+    translateY(-1px);
 }
 
 
 .import-button:disabled {
-  opacity: 0.55;
+  opacity: 0.5;
 
-  cursor: wait;
+  cursor: default;
 }
 
 
-.import-icon {
-  font-size: 20px;
+.plus {
+  font-size: 24px;
 
   line-height: 1;
 }
 
 
-.import-help {
-  margin-top: 7px;
-
-  color:
-    rgba(
-      255,
-      255,
-      255,
-      0.38
-    );
-
-  font-size: 9px;
+.import-hint {
+  margin:
+    10px 0 0;
 
   text-align: center;
+
+  color:
+    rgba(255, 255, 255, 0.38);
+
+  font-size: 10px;
 }
 </style>

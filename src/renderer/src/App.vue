@@ -60,10 +60,9 @@ type ModelBounds = {
 */
 
 /*
-  Built-in models:
+  Built-in models.
 
   Hiện tại chỉ có Akari.
-  Sau này có thể thêm built-in model khác.
 */
 const builtInModels:
   CharacterConfig[] =
@@ -89,6 +88,42 @@ const availableModels =
 
       ...importedModels.value
     ]
+  )
+
+
+/*
+  ============================================================
+  DELETABLE MODELS
+  ============================================================
+
+  Chỉ importedModels mới được xóa.
+
+  Akari built-in không nằm trong
+  danh sách này nên ModelPicker
+  sẽ không hiện dấu X ở Akari.
+*/
+
+const deletableModelIds =
+  computed<string[]>(
+    () =>
+      importedModels
+        .value
+        .map(
+          (
+            model
+          ) =>
+            model.id
+        )
+  )
+
+
+/*
+  Model hiện đang trong
+  quá trình delete.
+*/
+const deletingModelId =
+  ref<string | null>(
+    null
   )
 
 
@@ -304,8 +339,11 @@ const modelPickerStyle =
       modelBounds.value
 
 
+    /*
+      ModelPicker.vue mới có width 290px.
+    */
     const panelWidth =
-      265
+      290
 
 
     if (!bounds) {
@@ -408,6 +446,7 @@ const reactionWheelOpen =
 
 const modelPickerOpen =
   ref(false)
+
 
 const modelImporting =
   ref(false)
@@ -732,8 +771,11 @@ function closeModelPicker():
 
 
 /*
-  Chọn model hiện có.
+  ============================================================
+  SELECT MODEL
+  ============================================================
 */
+
 function selectModel(
   selectedModel:
     CharacterConfig
@@ -782,8 +824,11 @@ function selectModel(
 
 
 /*
-  Import một model mới.
+  ============================================================
+  IMPORT MODEL
+  ============================================================
 */
+
 async function importModel():
   Promise<void> {
   if (
@@ -847,10 +892,16 @@ async function importModel():
       imported.id
 
 
+    /*
+      Xóa actions model cũ.
+    */
     actions.value =
       []
 
 
+    /*
+      Đóng Model Picker.
+    */
     modelPickerOpen.value =
       false
 
@@ -867,6 +918,187 @@ async function importModel():
   finally {
     modelImporting.value =
       false
+  }
+}
+
+
+/*
+  ============================================================
+  DELETE IMPORTED MODEL
+  ============================================================
+
+  Luồng:
+
+  ModelPicker
+      ↓
+  @delete
+      ↓
+  deleteModel()
+      ↓
+  window.api.deleteModel(id)
+      ↓
+  preload
+      ↓
+  IPC models:delete
+      ↓
+  main/index.ts
+      ↓
+  xóa folder + index.json
+*/
+
+async function deleteModel(
+  model: CharacterConfig
+): Promise<void> {
+  /*
+    Chỉ model nằm trong
+    importedModels mới được xóa.
+
+    Như vậy Akari built-in
+    không thể bị xóa.
+  */
+  const importedModel =
+    importedModels
+      .value
+      .find(
+        (
+          item
+        ) =>
+          item.id ===
+          model.id
+      )
+
+
+  if (
+    !importedModel
+  ) {
+    console.warn(
+      '[Models] Cannot delete built-in model:',
+      model.id
+    )
+
+    return
+  }
+
+
+  /*
+    Nếu đang có một model
+    được delete thì không chạy thêm.
+  */
+  if (
+    deletingModelId.value !==
+    null
+  ) {
+    return
+  }
+
+
+  deletingModelId.value =
+    model.id
+
+
+  try {
+    /*
+      Gọi backend.
+
+      Backend sẽ hiện hộp thoại:
+
+      Cancel / Delete
+    */
+    const deleted =
+      await window.api
+        .deleteModel(
+          model.id
+        )
+
+
+    /*
+      User chọn Cancel.
+    */
+    if (
+      !deleted
+    ) {
+      console.log(
+        '[Models] Delete cancelled:',
+        model.name
+      )
+
+      return
+    }
+
+
+    /*
+      Nếu model đang bị xóa
+      chính là model đang hiển thị...
+    */
+    if (
+      currentCharacterId.value ===
+      model.id
+    ) {
+      /*
+        Đóng Reaction Wheel cũ.
+      */
+      reactionWheelOpen.value =
+        false
+
+
+      /*
+        Xóa React actions
+        của model bị xóa.
+      */
+      actions.value =
+        []
+
+
+      /*
+        Chuyển về model mặc định Akari.
+      */
+      currentCharacterId.value =
+        DEFAULT_CHARACTER_ID
+    }
+
+
+    /*
+      Xóa model khỏi danh sách
+      trong Vue ngay lập tức.
+    */
+    importedModels.value =
+      importedModels
+        .value
+        .filter(
+          (
+            item
+          ) =>
+            item.id !==
+            model.id
+        )
+
+
+    /*
+      Giữ Model Picker mở để user
+      thấy model vừa biến mất.
+    */
+    modelPickerOpen.value =
+      true
+
+
+    controlsVisible.value =
+      true
+
+
+    console.log(
+      '[Models] Deleted from UI:',
+      model.name
+    )
+  }
+  catch (error) {
+    console.error(
+      '[Models] Delete failed:',
+      error
+    )
+  }
+  finally {
+    deletingModelId.value =
+      null
   }
 }
 
@@ -1047,12 +1279,24 @@ onMounted(
             modelImporting
           "
 
+          :deletable-ids="
+            deletableModelIds
+          "
+
+          :deleting-id="
+            deletingModelId
+          "
+
           @select="
             selectModel
           "
 
           @import="
             importModel
+          "
+
+          @delete="
+            deleteModel
           "
 
           @close="

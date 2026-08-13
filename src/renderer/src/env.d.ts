@@ -5,23 +5,11 @@ import type {
 } from '@electron-toolkit/preload'
 
 
-/*
-  ============================================================
-  CURSOR
-  ============================================================
-*/
-
 interface CursorPosition {
   x: number
   y: number
 }
 
-
-/*
-  ============================================================
-  MODELS
-  ============================================================
-*/
 
 interface ModelTransform {
   scale: number
@@ -34,15 +22,10 @@ interface ImportedModelInfo {
   id: string
   name: string
   modelUrl: string
+
   transform: ModelTransform
 }
 
-
-/*
-  ============================================================
-  APP API
-  ============================================================
-*/
 
 interface AppAPI {
   getCursorPosition:
@@ -50,25 +33,31 @@ interface AppAPI {
 
 
   listModels:
-    () => Promise<ImportedModelInfo[]>
+    () => Promise<
+      ImportedModelInfo[]
+    >
 
 
   importModel:
-    () => Promise<ImportedModelInfo | null>
+    () => Promise<
+      ImportedModelInfo | null
+    >
+
+
+  deleteModel:
+    (
+      id: string
+    ) => Promise<boolean>
 }
 
 
-/*
-  ============================================================
-  WINDOW
-  ============================================================
-*/
-
 declare global {
   interface Window {
-    electron: ElectronAPI
+    electron:
+      ElectronAPI
 
-    api: AppAPI
+    api:
+      AppAPI
   }
 }
 

@@ -8,82 +8,61 @@ import {
 } from '@electron-toolkit/preload'
 
 
-/*
-  ============================================================
-  TYPES
-  ============================================================
-*/
-
-type CursorPosition = {
-  x: number
-  y: number
-}
-
-
-type ModelTransform = {
-  scale: number
-  x: number
-  y: number
-}
-
-
-type ImportedModelInfo = {
-  id: string
-  name: string
-  modelUrl: string
-  transform: ModelTransform
-}
-
-
-/*
-  ============================================================
-  APP API
-  ============================================================
-
-  Chỉ expose những chức năng renderer thực sự cần.
-*/
-
 const api = {
   /*
-    ----------------------------------------------------------
+    ==========================================================
     CURSOR
-    ----------------------------------------------------------
+    ==========================================================
   */
 
-  getCursorPosition:
-    (): Promise<CursorPosition> => {
-      return ipcRenderer.invoke(
-        'cursor:get-position'
-      )
-    },
+  getCursorPosition: () =>
+    ipcRenderer.invoke(
+      'cursor:get-position'
+    ),
 
 
   /*
-    ----------------------------------------------------------
+    ==========================================================
     MODEL LIBRARY
-    ----------------------------------------------------------
+    ==========================================================
   */
 
-  listModels:
-    (): Promise<ImportedModelInfo[]> => {
-      return ipcRenderer.invoke(
-        'models:list'
-      )
-    },
+  listModels: () =>
+    ipcRenderer.invoke(
+      'models:list'
+    ),
 
 
-  importModel:
-    (): Promise<ImportedModelInfo | null> => {
-      return ipcRenderer.invoke(
-        'models:import'
-      )
-    }
+  importModel: () =>
+    ipcRenderer.invoke(
+      'models:import'
+    ),
+
+
+  /*
+    Xóa model imported.
+
+    Renderer:
+      window.api.deleteModel(id)
+
+           ↓
+
+    Main:
+      ipcMain.handle('models:delete')
+  */
+  deleteModel: (
+    id: string
+  ) =>
+    ipcRenderer.invoke(
+      'models:delete',
+      id
+    )
 }
 
 
 /*
   ============================================================
-  EXPOSE TO RENDERER
+  EXPOSE API
   ============================================================
 */
 
@@ -91,35 +70,26 @@ if (
   process.contextIsolated
 ) {
   try {
-    /*
-      API mặc định của electron-toolkit.
-    */
-    contextBridge.exposeInMainWorld(
-      'electron',
-      electronAPI
-    )
+    contextBridge
+      .exposeInMainWorld(
+        'electron',
+        electronAPI
+      )
 
 
-    /*
-      API riêng của app.
-    */
-    contextBridge.exposeInMainWorld(
-      'api',
-      api
-    )
+    contextBridge
+      .exposeInMainWorld(
+        'api',
+        api
+      )
   }
   catch (error) {
     console.error(
-      '[Preload] Failed to expose APIs:',
       error
     )
   }
 }
 else {
-  /*
-    Fallback nếu contextIsolation tắt.
-  */
-
   // @ts-ignore
   window.electron =
     electronAPI

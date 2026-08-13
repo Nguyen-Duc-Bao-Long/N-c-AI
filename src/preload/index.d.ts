@@ -3,12 +3,6 @@ import type {
 } from '@electron-toolkit/preload'
 
 
-/*
-  ============================================================
-  TYPES
-  ============================================================
-*/
-
 interface CursorPosition {
   x: number
   y: number
@@ -26,47 +20,50 @@ interface ImportedModelInfo {
   id: string
   name: string
   modelUrl: string
+
   transform: ModelTransform
 }
 
 
 interface AppAPI {
   /*
-    Cursor tracking.
+    Cursor
   */
   getCursorPosition:
     () => Promise<CursorPosition>
 
 
   /*
-    Trả về danh sách model
-    user đã import.
+    Model Library
   */
   listModels:
-    () => Promise<ImportedModelInfo[]>
+    () => Promise<
+      ImportedModelInfo[]
+    >
+
+
+  importModel:
+    () => Promise<
+      ImportedModelInfo | null
+    >
 
 
   /*
-    Mở file picker và import
-    một model mới.
-
-    null = user bấm Cancel.
+    Delete imported model.
   */
-  importModel:
-    () => Promise<ImportedModelInfo | null>
+  deleteModel:
+    (
+      id: string
+    ) => Promise<boolean>
 }
 
 
-/*
-  ============================================================
-  WINDOW GLOBAL
-  ============================================================
-*/
-
 declare global {
   interface Window {
-    electron: ElectronAPI
+    electron:
+      ElectronAPI
 
-    api: AppAPI
+    api:
+      AppAPI
   }
 }
