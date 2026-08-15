@@ -6,7 +6,10 @@ import {
   screen as electronScreen,
   dialog,
   protocol,
-  net
+  net,
+  Menu,
+  Tray,
+  nativeImage
 } from 'electron'
 
 import {
@@ -46,6 +49,37 @@ import {
   optimizer,
   is
 } from '@electron-toolkit/utils'
+
+
+/*
+  ============================================================
+  MAIN WINDOW / SYSTEM TRAY
+  ============================================================
+
+  BrowserWindow vẫn skipTaskbar = true
+  vì đây là desktop companion full-screen transparent.
+
+  User sẽ quản lý app bằng System Tray:
+  - Show Character
+  - Hide Character
+  - Exit
+
+  Tray icon bên dưới được nhúng trực tiếp vào code để bản Beta
+  vẫn luôn có icon kể cả khi chưa có build/icon.ico riêng.
+*/
+
+let mainWindow:
+  BrowserWindow | null =
+    null
+
+
+let tray:
+  Tray | null =
+    null
+
+
+const TRAY_ICON_DATA_URL =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAA0klEQVR4nO2Xyw2EMAxEAdEONLGUBScoC5rYLWg5ESFC7Jl8iBD4hBTH8+zYUSiKp1upOfSf7z9EYFpaUcO5GCqMglRXiEsxLYAU4lLsSnNIDVGHBBvnxnwP3c8rhmkMJvu98NFQkK0pT5vwSqMBpOyR9WCA2HY/AK3J2GnIXgGve2DLMsY9QAO4utwXhjoCdMSYUYQB2PlG/SEAVpzZl30KXgAIwHfGkX0GQHu9shCS/16LOgIUgoG1sk79LjxW2qqAdhQxxU8BUkG4Ymb/NXttBelbUzpnNfUCAAAAAElFTkSuQmCC'
 
 
 type ImportedModelInfo = {
@@ -2192,6 +2226,187 @@ function registerIpcHandlers():
 
 /*
   ============================================================
+  SYSTEM TRAY
+  ============================================================
+*/
+
+function createTrayIcon() {
+  const icon =
+    nativeImage
+      .createFromDataURL(
+        TRAY_ICON_DATA_URL
+      )
+
+
+  /*
+    Windows tray thường hiển thị tốt
+    với icon 16x16 hoặc 32x32.
+  */
+
+  return icon.resize({
+    width:
+      16,
+
+    height:
+      16
+  })
+}
+
+
+function showCharacterWindow():
+  void {
+  /*
+    Nếu window đã bị destroy,
+    tạo lại window.
+  */
+
+  if (
+    !mainWindow ||
+    mainWindow.isDestroyed()
+  ) {
+    createWindow()
+
+    return
+  }
+
+
+  /*
+    showInactive() giúp hiện character
+    mà không giật focus khỏi app user
+    đang sử dụng.
+  */
+
+  if (
+    !mainWindow.isVisible()
+  ) {
+    mainWindow
+      .showInactive()
+  }
+
+
+  /*
+    Bảo đảm desktop companion
+    tiếp tục luôn nổi sau khi show.
+  */
+
+  mainWindow
+    .setAlwaysOnTop(
+      true
+    )
+}
+
+
+function hideCharacterWindow():
+  void {
+  if (
+    !mainWindow ||
+    mainWindow.isDestroyed()
+  ) {
+    return
+  }
+
+
+  mainWindow.hide()
+}
+
+
+function createTray():
+  void {
+  /*
+    Không tạo nhiều Tray icon
+    nếu Electron activate lại app.
+  */
+
+  if (tray) {
+    return
+  }
+
+
+  tray =
+    new Tray(
+      createTrayIcon()
+    )
+
+
+  tray.setToolTip(
+    `AI Desktop Character ${app.getVersion()}`
+  )
+
+
+  const trayMenu =
+    Menu.buildFromTemplate([
+      {
+        label:
+          `AI Desktop Character ${app.getVersion()}`,
+
+        enabled:
+          false
+      },
+
+      {
+        type:
+          'separator'
+      },
+
+      {
+        label:
+          'Show Character',
+
+        click:
+          () => {
+            showCharacterWindow()
+          }
+      },
+
+      {
+        label:
+          'Hide Character',
+
+        click:
+          () => {
+            hideCharacterWindow()
+          }
+      },
+
+      {
+        type:
+          'separator'
+      },
+
+      {
+        label:
+          'Exit',
+
+        click:
+          () => {
+            app.quit()
+          }
+      }
+    ])
+
+
+  tray.setContextMenu(
+    trayMenu
+  )
+
+
+  /*
+    Double-click tray icon
+    → hiện character trở lại.
+  */
+
+  tray.on(
+    'double-click',
+
+    () => {
+      showCharacterWindow()
+    }
+  )
+}
+
+
+/*
+  ============================================================
   CREATE WINDOW
   ============================================================
 
@@ -2218,7 +2433,7 @@ function createWindow():
     primaryDisplay.bounds
 
 
-  const mainWindow =
+  const window =
     new BrowserWindow({
       /*
         Full monitor.
@@ -2308,6 +2523,35 @@ function createWindow():
 
 
   /*
+    Lưu BrowserWindow vào biến global
+    để System Tray có thể Show / Hide.
+  */
+
+  mainWindow =
+    window
+
+
+  /*
+    Nếu window bị đóng/destroy,
+    bỏ reference cũ.
+  */
+
+  window.on(
+    'closed',
+
+    () => {
+      if (
+        mainWindow ===
+        window
+      ) {
+        mainWindow =
+          null
+      }
+    }
+  )
+
+
+  /*
     Ban đầu click xuyên desktop.
 
     App.vue sẽ bật lại mouse event
@@ -2318,7 +2562,7 @@ function createWindow():
     - panels
   */
 
-  mainWindow
+  window
     .setIgnoreMouseEvents(
       true,
 
@@ -2333,11 +2577,11 @@ function createWindow():
     Show khi renderer ready.
   */
 
-  mainWindow.on(
+  window.on(
     'ready-to-show',
 
     () => {
-      mainWindow.show()
+      window.show()
     }
   )
 
@@ -2346,7 +2590,7 @@ function createWindow():
     Link ngoài mở bằng browser.
   */
 
-  mainWindow
+  window
     .webContents
     .setWindowOpenHandler(
       (
@@ -2376,7 +2620,7 @@ function createWindow():
       'ELECTRON_RENDERER_URL'
     ]
   ) {
-    void mainWindow
+    void window
       .loadURL(
         process.env[
           'ELECTRON_RENDERER_URL'
@@ -2388,7 +2632,7 @@ function createWindow():
       Production.
     */
 
-    void mainWindow
+    void window
       .loadFile(
         join(
           __dirname,
@@ -2474,6 +2718,20 @@ app
 
 
       /*
+        System Tray.
+
+        Vì BrowserWindow dùng
+        skipTaskbar = true,
+        Tray là nơi user quản lý:
+        - Show
+        - Hide
+        - Exit
+      */
+
+      createTray()
+
+
+      /*
         macOS activate.
       */
 
@@ -2489,10 +2747,36 @@ app
           ) {
             createWindow()
           }
+
+
+          createTray()
         }
       )
     }
   )
+
+
+/*
+  ============================================================
+  APP BEFORE QUIT
+  ============================================================
+
+  Dọn System Tray để Windows
+  không giữ icon ghost sau khi Exit.
+*/
+
+app.on(
+  'before-quit',
+
+  () => {
+    if (tray) {
+      tray.destroy()
+
+      tray =
+        null
+    }
+  }
+)
 
 
 /*
