@@ -1,8 +1,14 @@
 <script setup lang="ts">
 import type {
   CharacterConfig
-} from '@renderer/characters/types'
+} from '../../../characters/types'
 
+
+/*
+  ============================================================
+  PROPS
+  ============================================================
+*/
 
 const props =
   defineProps<{
@@ -18,160 +24,261 @@ const props =
     importing:
       boolean
 
-    /*
-      Chỉ ID nằm trong đây
-      mới có nút delete.
-
-      Akari built-in sẽ không
-      nằm trong deletableIds.
-    */
     deletableIds:
       string[]
 
-    /*
-      ID model đang xóa.
-    */
     deletingId:
       string | null
   }>()
 
 
+/*
+  ============================================================
+  EMITS
+  ============================================================
+*/
+
 const emit =
   defineEmits<{
-    (
-      event:
-        'select',
+    select:
+      [model: CharacterConfig]
 
-      model:
-        CharacterConfig
-    ): void
+    import:
+      []
 
+    delete:
+      [model: CharacterConfig]
 
-    (
-      event:
-        'import'
-    ): void
-
-
-    (
-      event:
-        'delete',
-
-      model:
-        CharacterConfig
-    ): void
-
-
-    (
-      event:
-        'close'
-    ): void
+    close:
+      []
   }>()
 
 
-function canDelete(
-  modelId: string
+/*
+  ============================================================
+  HELPERS
+  ============================================================
+*/
+
+function isSelected(
+  model: CharacterConfig
+): boolean {
+  return (
+    model.id ===
+    props.selectedId
+  )
+}
+
+
+function isDefault(
+  model: CharacterConfig
+): boolean {
+  return (
+    model.id ===
+    props.defaultId
+  )
+}
+
+
+function isDeletable(
+  model: CharacterConfig
 ): boolean {
   return props
     .deletableIds
     .includes(
-      modelId
+      model.id
     )
+}
+
+
+function isDeleting(
+  model: CharacterConfig
+): boolean {
+  return (
+    props.deletingId ===
+    model.id
+  )
+}
+
+
+/*
+  ============================================================
+  MODEL SELECT
+  ============================================================
+*/
+
+function selectModel(
+  model: CharacterConfig
+): void {
+  if (
+    isDeleting(
+      model
+    )
+  ) {
+    return
+  }
+
+
+  emit(
+    'select',
+    model
+  )
+}
+
+
+/*
+  ============================================================
+  MODEL DELETE
+  ============================================================
+
+  Chỉ model KHÔNG được chọn
+  mới hiện nút ×.
+
+  Vì vậy selected model
+  không thể vừa có ✓ vừa có ×.
+*/
+
+function deleteModel(
+  event: MouseEvent,
+  model: CharacterConfig
+): void {
+  event.preventDefault()
+  event.stopPropagation()
+
+
+  if (
+    isSelected(
+      model
+    )
+  ) {
+    return
+  }
+
+
+  if (
+    !isDeletable(
+      model
+    )
+  ) {
+    return
+  }
+
+
+  if (
+    isDeleting(
+      model
+    )
+  ) {
+    return
+  }
+
+
+  emit(
+    'delete',
+    model
+  )
 }
 </script>
 
 
 <template>
-  <div
-    class="model-picker"
-    @click.stop
-  >
-    <!-- ==================================================
-         HEADER
-         ================================================== -->
-    <div class="picker-header">
-      <div class="title-area">
-        <h2>
+  <section class="model-picker">
+
+    <!--
+      =========================================================
+      HEADER
+      =========================================================
+    -->
+
+    <header class="model-picker__header">
+
+      <div class="model-picker__heading">
+
+        <h2 class="model-picker__title">
           Models
         </h2>
 
-        <p>
+        <p class="model-picker__subtitle">
           Choose your character
         </p>
+
       </div>
 
 
       <button
+        class="model-picker__close"
         type="button"
-        class="close-button"
         title="Close"
-        @click="
-          emit('close')
-        "
+        @click="emit('close')"
       >
         ×
       </button>
-    </div>
+
+    </header>
 
 
-    <!-- ==================================================
-         MODEL LIST
-         ================================================== -->
-    <div class="model-list">
-      <div
-        v-for="
-          model in models
-        "
-        :key="
-          model.id
-        "
-        class="model-item"
+    <!--
+      =========================================================
+      MODEL LIST
+      =========================================================
+    -->
+
+    <div class="model-picker__list">
+
+      <button
+        v-for="model in models"
+        :key="model.id"
+        class="model-card"
         :class="{
-          selected:
-            selectedId ===
-            model.id
+          'model-card--selected':
+            isSelected(model),
+
+          'model-card--deleting':
+            isDeleting(model)
         }"
+        type="button"
+        @click="
+          selectModel(
+            model
+          )
+        "
       >
-        <!--
-          Phần click để SELECT MODEL.
-        -->
-        <button
-          type="button"
-          class="model-select-button"
-          @click="
-            emit(
-              'select',
-              model
-            )
-          "
-        >
-          <!-- AVATAR -->
-          <div class="model-avatar">
-            {{
-              model.name
-                .charAt(0)
-                .toUpperCase()
-            }}
+
+        <!-- =====================
+             AVATAR
+             ===================== -->
+
+        <div class="model-card__avatar">
+          {{
+            model.name
+              .charAt(0)
+              .toUpperCase()
+          }}
+        </div>
+
+
+        <!-- =====================
+             INFO
+             ===================== -->
+
+        <div class="model-card__content">
+
+          <div class="model-card__name">
+            {{ model.name }}
           </div>
 
 
-          <!-- MODEL INFO -->
-          <div class="model-info">
-            <strong>
-              {{
-                model.name
-              }}
-            </strong>
-
+          <div class="model-card__meta">
 
             <span
               v-if="
-                model.id ===
-                defaultId
+                isDefault(
+                  model
+                )
               "
               class="
-                model-badge
-                default-badge
+                model-card__badge
+                model-card__badge--default
               "
             >
               Default
@@ -180,143 +287,224 @@ function canDelete(
 
             <span
               v-else-if="
-                canDelete(
-                  model.id
+                isDeletable(
+                  model
                 )
               "
               class="
-                model-badge
-                imported-badge
+                model-card__badge
+                model-card__badge--imported
               "
             >
               Imported
             </span>
+
           </div>
-        </button>
+
+        </div>
 
 
-        <!-- ==================================================
-             RIGHT SIDE ACTIONS
-             ================================================== -->
-        <div class="model-actions">
-          <!-- DELETE BUTTON -->
-          <button
+        <!--
+          =====================================================
+          RIGHT ACTION
+          =====================================================
+
+          QUAN TRỌNG:
+
+          selected
+               ↓
+               ✓
+
+          imported + not selected
+               ↓
+               ×
+
+          Không bao giờ hiện cả hai.
+        -->
+
+        <div class="model-card__action">
+
+          <!-- =====================
+               SELECTED
+               ===================== -->
+
+          <span
             v-if="
-              canDelete(
-                model.id
+              isSelected(
+                model
               )
             "
+            class="
+              model-card__status-icon
+              model-card__status-icon--selected
+            "
+            title="Selected"
+          >
+            ✓
+          </span>
+
+
+          <!-- =====================
+               DELETE
+               ===================== -->
+
+          <button
+            v-else-if="
+              isDeletable(
+                model
+              )
+            "
+            class="
+              model-card__status-icon
+              model-card__status-icon--delete
+            "
+            :class="{
+              'model-card__status-icon--loading':
+                isDeleting(
+                  model
+                )
+            }"
             type="button"
-            class="delete-button"
             :disabled="
-              deletingId ===
-              model.id
+              isDeleting(
+                model
+              )
             "
-            :title="
-              `Delete ${model.name}`
-            "
-            @click.stop="
-              emit(
-                'delete',
+            title="Delete model"
+            @click="
+              deleteModel(
+                $event,
                 model
               )
             "
           >
-            <span
-              v-if="
-                deletingId !==
-                model.id
-              "
-            >
-              ×
-            </span>
-
-            <span v-else>
-              …
-            </span>
+            {{
+              isDeleting(model)
+                ? '…'
+                : '×'
+            }}
           </button>
 
-
-          <!-- CURRENT MODEL -->
-          <span
-            v-if="
-              selectedId ===
-              model.id
-            "
-            class="selected-check"
-          >
-            ✓
-          </span>
         </div>
-      </div>
+
+      </button>
+
     </div>
 
 
-    <!-- DIVIDER -->
-    <div class="divider" />
+    <!--
+      =========================================================
+      IMPORT
+      =========================================================
+    -->
+
+    <div class="model-picker__footer">
+
+      <button
+        class="model-picker__import"
+        type="button"
+        :disabled="importing"
+        @click="
+          emit(
+            'import'
+          )
+        "
+      >
+
+        <span class="model-picker__import-plus">
+          +
+        </span>
 
 
-    <!-- ==================================================
-         IMPORT MODEL
-         ================================================== -->
-    <button
-      type="button"
-      class="import-button"
-      :disabled="
-        importing
-      "
-      @click="
-        emit('import')
-      "
-    >
-      <span class="plus">
-        +
-      </span>
+        <span>
+          {{
+            importing
+              ? 'Importing...'
+              : 'Import Model'
+          }}
+        </span>
 
-      <span>
-        {{
-          importing
-            ? 'Importing...'
-            : 'Import Model'
-        }}
-      </span>
-    </button>
+      </button>
 
 
-    <p class="import-hint">
-      Select a Live2D
-      <strong>.model3.json</strong>
-      file.
-    </p>
-  </div>
+      <p class="model-picker__hint">
+        Select a Live2D .model3.json file.
+      </p>
+
+    </div>
+
+  </section>
 </template>
 
 
 <style scoped>
+/*
+  ============================================================
+  PICKER
+  ============================================================
+*/
+
 .model-picker {
-  width: 290px;
+  width:
+    330px;
 
-  box-sizing: border-box;
+  max-height:
+    620px;
 
-  padding: 18px;
+  padding:
+    22px;
+
+  box-sizing:
+    border-box;
+
+  display:
+    flex;
+
+  flex-direction:
+    column;
+
+  gap:
+    18px;
 
   border:
     1px solid
-    rgba(255, 255, 255, 0.15);
+    rgba(
+      255,
+      255,
+      255,
+      0.08
+    );
 
-  border-radius: 24px;
+  border-radius:
+    26px;
 
   background:
-    rgba(18, 17, 29, 0.95);
+    rgba(
+      22,
+      21,
+      34,
+      0.94
+    );
 
-  backdrop-filter:
-    blur(20px);
+  color:
+    white;
 
   box-shadow:
     0 18px 50px
-    rgba(0, 0, 0, 0.45);
+    rgba(
+      0,
+      0,
+      0,
+      0.38
+    );
 
-  color: white;
+  backdrop-filter:
+    blur(
+      22px
+    );
+
+  overflow:
+    hidden;
 
   -webkit-app-region:
     no-drag;
@@ -329,8 +517,9 @@ function canDelete(
   ============================================================
 */
 
-.picker-header {
-  display: flex;
+.model-picker__header {
+  display:
+    flex;
 
   align-items:
     flex-start;
@@ -338,169 +527,262 @@ function canDelete(
   justify-content:
     space-between;
 
-  gap: 12px;
+  gap:
+    16px;
 }
 
 
-.title-area h2 {
-  margin: 0;
-
-  font-size: 24px;
-
-  line-height: 1;
+.model-picker__heading {
+  min-width:
+    0;
 }
 
 
-.title-area p {
+.model-picker__title {
+  margin:
+    0;
+
+  color:
+    white;
+
+  font-size:
+    28px;
+
+  font-weight:
+    800;
+
+  line-height:
+    1.1;
+}
+
+
+.model-picker__subtitle {
   margin:
     6px 0 0;
 
   color:
-    rgba(255, 255, 255, 0.55);
+    rgba(
+      255,
+      255,
+      255,
+      0.55
+    );
 
-  font-size: 12px;
-}
-
-
-.close-button {
-  width: 38px;
-  height: 38px;
-
-  display: flex;
-
-  align-items: center;
-
-  justify-content: center;
-
-  flex-shrink: 0;
-
-  padding: 0;
-
-  border: 0;
-
-  border-radius: 50%;
-
-  background:
-    rgba(255, 255, 255, 0.07);
-
-  color: white;
-
-  font-size: 24px;
-
-  font-weight: 600;
-
-  line-height: 1;
-
-  cursor: pointer;
-
-  transition:
-    background 0.15s ease,
-    transform 0.15s ease;
-
-  -webkit-app-region:
-    no-drag;
-}
-
-
-.close-button:hover {
-  background:
-    rgba(255, 255, 255, 0.14);
-
-  transform:
-    scale(1.05);
+  font-size:
+    13px;
 }
 
 
 /*
   ============================================================
-  MODEL LIST
+  CLOSE
   ============================================================
 */
 
-.model-list {
-  display: flex;
+.model-picker__close {
+  width:
+    46px;
 
-  flex-direction: column;
+  height:
+    46px;
 
-  gap: 10px;
+  flex:
+    0 0 auto;
 
-  margin-top: 18px;
+  padding:
+    0;
+
+  border:
+    none;
+
+  border-radius:
+    50%;
+
+  display:
+    flex;
+
+  align-items:
+    center;
+
+  justify-content:
+    center;
+
+  background:
+    rgba(
+      255,
+      255,
+      255,
+      0.07
+    );
+
+  color:
+    white;
+
+  font-size:
+    28px;
+
+  font-weight:
+    700;
+
+  line-height:
+    1;
+
+  cursor:
+    pointer;
+
+  -webkit-app-region:
+    no-drag;
+
+  transition:
+    transform 120ms ease,
+    background 120ms ease;
 }
 
 
-.model-item {
-  min-height: 72px;
+.model-picker__close:hover {
+  transform:
+    scale(
+      1.07
+    );
 
-  display: flex;
+  background:
+    rgba(
+      255,
+      255,
+      255,
+      0.12
+    );
+}
 
-  align-items: center;
 
-  box-sizing: border-box;
+/*
+  ============================================================
+  LIST
+  ============================================================
+*/
 
-  overflow: hidden;
+.model-picker__list {
+  display:
+    flex;
+
+  flex-direction:
+    column;
+
+  gap:
+    10px;
+
+  overflow-y:
+    auto;
+
+  padding-right:
+    2px;
+}
+
+
+/*
+  ============================================================
+  MODEL CARD
+  ============================================================
+*/
+
+.model-card {
+  position:
+    relative;
+
+  width:
+    100%;
+
+  min-height:
+    90px;
+
+  padding:
+    12px;
 
   border:
     1px solid
     transparent;
 
-  border-radius: 18px;
+  border-radius:
+    20px;
+
+  display:
+    flex;
+
+  align-items:
+    center;
+
+  gap:
+    14px;
 
   background:
-    rgba(255, 255, 255, 0.055);
+    rgba(
+      255,
+      255,
+      255,
+      0.055
+    );
 
-  transition:
-    background 0.15s ease,
-    border-color 0.15s ease;
-}
+  color:
+    white;
 
+  text-align:
+    left;
 
-.model-item:hover {
-  background:
-    rgba(255, 255, 255, 0.09);
-}
-
-
-.model-item.selected {
-  border-color:
-    rgba(142, 93, 255, 0.95);
-
-  background:
-    rgba(103, 66, 189, 0.28);
-}
-
-
-/*
-  Phần chính để chọn model.
-*/
-.model-select-button {
-  min-width: 0;
-
-  flex: 1;
-
-  display: flex;
-
-  align-items: center;
-
-  gap: 12px;
-
-  align-self: stretch;
-
-  padding:
-    10px 4px 10px 10px;
-
-  border: 0;
-
-  background:
-    transparent;
-
-  color: white;
-
-  text-align: left;
-
-  cursor: pointer;
+  cursor:
+    pointer;
 
   -webkit-app-region:
     no-drag;
+
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    transform 140ms ease;
+}
+
+
+.model-card:hover {
+  background:
+    rgba(
+      255,
+      255,
+      255,
+      0.085
+    );
+}
+
+
+.model-card--selected {
+  border-color:
+    rgba(
+      151,
+      88,
+      255,
+      0.95
+    );
+
+  background:
+    linear-gradient(
+      135deg,
+      rgba(
+        124,
+        67,
+        210,
+        0.25
+      ),
+      rgba(
+        98,
+        55,
+        165,
+        0.14
+      )
+    );
+}
+
+
+.model-card--deleting {
+  opacity:
+    0.58;
 }
 
 
@@ -510,238 +792,350 @@ function canDelete(
   ============================================================
 */
 
-.model-avatar {
-  width: 50px;
-  height: 50px;
+.model-card__avatar {
+  width:
+    62px;
+
+  height:
+    62px;
 
   flex:
-    0 0 50px;
+    0 0 62px;
 
-  display: flex;
+  border-radius:
+    14px;
 
-  align-items: center;
+  display:
+    flex;
 
-  justify-content: center;
+  align-items:
+    center;
 
-  border-radius: 15px;
+  justify-content:
+    center;
 
   background:
     linear-gradient(
       135deg,
-      #8758e8,
-      #d64db7
+      #a35ce0,
+      #9847cc
     );
 
-  color: white;
+  color:
+    white;
 
-  font-size: 21px;
+  font-size:
+    28px;
 
-  font-weight: 700;
+  font-weight:
+    800;
 }
 
 
 /*
   ============================================================
-  MODEL INFO
+  INFO
   ============================================================
 */
 
-.model-info {
-  min-width: 0;
+.model-card__content {
+  min-width:
+    0;
 
-  display: flex;
+  flex:
+    1;
+}
 
-  flex-direction: column;
+
+.model-card__name {
+  overflow:
+    hidden;
+
+  color:
+    white;
+
+  font-size:
+    19px;
+
+  font-weight:
+    750;
+
+  line-height:
+    1.2;
+
+  text-overflow:
+    ellipsis;
+
+  white-space:
+    nowrap;
+}
+
+
+.model-card__meta {
+  min-height:
+    20px;
+
+  margin-top:
+    5px;
+}
+
+
+/*
+  ============================================================
+  BADGE
+  ============================================================
+*/
+
+.model-card__badge {
+  display:
+    inline-flex;
 
   align-items:
-    flex-start;
+    center;
 
-  gap: 5px;
-}
-
-
-.model-info strong {
-  max-width: 120px;
-
-  overflow: hidden;
-
-  text-overflow: ellipsis;
-
-  white-space: nowrap;
-
-  font-size: 16px;
-}
-
-
-.model-badge {
-  display: inline-flex;
-
-  align-items: center;
+  min-height:
+    18px;
 
   padding:
-    2px 7px;
+    1px 7px;
 
   border-radius:
-    999px;
+    6px;
 
-  font-size: 10px;
+  font-size:
+    11px;
 
-  line-height: 1.2;
+  line-height:
+    1.2;
 }
 
 
-.default-badge {
+.model-card__badge--default {
   background:
-    rgba(82, 196, 111, 0.25);
+    rgba(
+      80,
+      180,
+      90,
+      0.32
+    );
 
   color:
-    #a3f3ad;
+    #9ee7a5;
 }
 
 
-.imported-badge {
+.model-card__badge--imported {
   background:
-    rgba(255, 255, 255, 0.08);
+    rgba(
+      255,
+      255,
+      255,
+      0.08
+    );
 
   color:
-    rgba(255, 255, 255, 0.5);
+    rgba(
+      255,
+      255,
+      255,
+      0.55
+    );
 }
 
 
 /*
   ============================================================
-  MODEL RIGHT ACTIONS
+  RIGHT ACTION
   ============================================================
 */
 
-.model-actions {
+.model-card__action {
+  width:
+    36px;
+
+  height:
+    46px;
+
   flex:
-    0 0 auto;
+    0 0 36px;
 
-  display: flex;
+  display:
+    flex;
 
-  align-items: center;
+  align-items:
+    center;
 
-  gap: 7px;
-
-  padding-right: 10px;
+  justify-content:
+    center;
 }
 
 
 /*
   ============================================================
-  DELETE
+  ✓ / × SHARED STYLE
   ============================================================
+
+  Cả hai dùng CHUNG:
+  - size
+  - font
+  - màu
+  - background
+  - không có viền đỏ
+
+  Khác nhau duy nhất là ký tự.
 */
 
-.delete-button {
-  width: 30px;
-  height: 30px;
+.model-card__status-icon {
+  width:
+    36px;
 
-  display: flex;
+  height:
+    46px;
 
-  align-items: center;
-
-  justify-content: center;
-
-  padding: 0;
+  padding:
+    0;
 
   border:
-    1px solid
-    rgba(255, 76, 96, 0.34);
+    none;
 
-  border-radius: 9px;
+  display:
+    flex;
+
+  align-items:
+    center;
+
+  justify-content:
+    center;
 
   background:
-    rgba(255, 55, 78, 0.09);
+    transparent;
 
   color:
-    #ff576d;
+    #a875ff;
 
-  font-size: 21px;
+  font-family:
+    Arial,
+    sans-serif;
 
-  font-weight: 700;
+  font-size:
+    31px;
 
-  line-height: 1;
+  font-weight:
+    700;
 
-  cursor: pointer;
+  line-height:
+    1;
 
-  transition:
-    background 0.15s ease,
-    border-color 0.15s ease,
-    transform 0.15s ease;
+  text-align:
+    center;
+}
+
+
+/*
+  ============================================================
+  SELECTED ✓
+  ============================================================
+*/
+
+.model-card__status-icon--selected {
+  /*
+    Span nên không có cursor button.
+  */
+
+  cursor:
+    default;
+
+  text-shadow:
+    0 0 12px
+    rgba(
+      165,
+      112,
+      255,
+      0.25
+    );
+}
+
+
+/*
+  ============================================================
+  DELETE ×
+  ============================================================
+
+  Giống tick nhưng có thể click.
+*/
+
+.model-card__status-icon--delete {
+  cursor:
+    pointer;
 
   -webkit-app-region:
     no-drag;
+
+  transition:
+    transform 110ms ease,
+    opacity 110ms ease,
+    text-shadow 110ms ease;
 }
 
 
-.delete-button:hover:not(
-  :disabled
-) {
-  background:
-    rgba(255, 55, 78, 0.22);
-
-  border-color:
-    rgba(255, 86, 105, 0.8);
-
+.model-card__status-icon--delete:hover {
   transform:
-    scale(1.07);
+    scale(
+      1.14
+    );
+
+  text-shadow:
+    0 0 12px
+    rgba(
+      165,
+      112,
+      255,
+      0.52
+    );
 }
 
 
-.delete-button:active:not(
-  :disabled
-) {
+.model-card__status-icon--delete:active {
   transform:
-    scale(0.95);
+    scale(
+      0.90
+    );
 }
 
 
-.delete-button:disabled {
-  opacity: 0.4;
+.model-card__status-icon--delete:disabled {
+  cursor:
+    default;
 
-  cursor: default;
+  opacity:
+    0.45;
+}
+
+
+.model-card__status-icon--loading {
+  font-size:
+    24px;
 }
 
 
 /*
   ============================================================
-  SELECTED CHECK
+  FOOTER
   ============================================================
 */
 
-.selected-check {
-  width: 20px;
+.model-picker__footer {
+  padding-top:
+    2px;
 
-  flex:
-    0 0 20px;
-
-  color:
-    #aa83ff;
-
-  font-size: 23px;
-
-  font-weight: 700;
-
-  text-align: center;
-}
-
-
-/*
-  ============================================================
-  DIVIDER
-  ============================================================
-*/
-
-.divider {
-  height: 1px;
-
-  margin:
-    16px 0;
-
-  background:
-    rgba(255, 255, 255, 0.13);
+  border-top:
+    1px solid
+    rgba(
+      255,
+      255,
+      255,
+      0.07
+    );
 }
 
 
@@ -751,82 +1145,161 @@ function canDelete(
   ============================================================
 */
 
-.import-button {
-  width: 100%;
+.model-picker__import {
+  width:
+    100%;
 
-  height: 55px;
+  min-height:
+    68px;
 
-  display: flex;
+  margin-top:
+    16px;
 
-  align-items: center;
-
-  justify-content: center;
-
-  gap: 9px;
-
-  padding: 0;
+  padding:
+    0 20px;
 
   border:
-    1px solid
-    rgba(180, 130, 255, 0.55);
+    none;
 
-  border-radius: 16px;
+  border-radius:
+    18px;
+
+  display:
+    flex;
+
+  align-items:
+    center;
+
+  justify-content:
+    center;
+
+  gap:
+    9px;
 
   background:
     linear-gradient(
       135deg,
-      rgba(100, 64, 190, 0.95),
-      rgba(161, 62, 157, 0.95)
+      #6d47c6,
+      #9b44ad
     );
 
-  color: white;
+  color:
+    white;
 
-  font-size: 15px;
+  font-size:
+    17px;
 
-  font-weight: 700;
+  font-weight:
+    800;
 
-  cursor: pointer;
-
-  transition:
-    opacity 0.15s ease,
-    transform 0.15s ease;
+  cursor:
+    pointer;
 
   -webkit-app-region:
     no-drag;
+
+  transition:
+    transform 130ms ease,
+    filter 130ms ease;
 }
 
 
-.import-button:hover:not(
-  :disabled
-) {
+.model-picker__import:hover:not(:disabled) {
   transform:
-    translateY(-1px);
+    translateY(
+      -1px
+    );
+
+  filter:
+    brightness(
+      1.08
+    );
 }
 
 
-.import-button:disabled {
-  opacity: 0.5;
-
-  cursor: default;
+.model-picker__import:active:not(:disabled) {
+  transform:
+    scale(
+      0.985
+    );
 }
 
 
-.plus {
-  font-size: 24px;
+.model-picker__import:disabled {
+  cursor:
+    default;
 
-  line-height: 1;
+  opacity:
+    0.55;
 }
 
 
-.import-hint {
+.model-picker__import-plus {
+  font-size:
+    28px;
+
+  font-weight:
+    900;
+
+  line-height:
+    1;
+}
+
+
+/*
+  ============================================================
+  HINT
+  ============================================================
+*/
+
+.model-picker__hint {
   margin:
     10px 0 0;
 
-  text-align: center;
-
   color:
-    rgba(255, 255, 255, 0.38);
+    rgba(
+      255,
+      255,
+      255,
+      0.42
+    );
 
-  font-size: 10px;
+  font-size:
+    11px;
+
+  text-align:
+    center;
+}
+
+
+/*
+  ============================================================
+  SCROLLBAR
+  ============================================================
+*/
+
+.model-picker__list::-webkit-scrollbar {
+  width:
+    5px;
+}
+
+
+.model-picker__list::-webkit-scrollbar-track {
+  background:
+    transparent;
+}
+
+
+.model-picker__list::-webkit-scrollbar-thumb {
+  border-radius:
+    999px;
+
+  background:
+    rgba(
+      255,
+      255,
+      255,
+      0.14
+    );
 }
 </style>

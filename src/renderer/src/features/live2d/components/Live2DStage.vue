@@ -8,8 +8,13 @@ import {
 
 import * as PIXI from 'pixi.js'
 
-import { ShaderSystem } from '@pixi/core'
-import { install as installUnsafeEval } from '@pixi/unsafe-eval'
+import {
+  ShaderSystem
+} from '@pixi/core'
+
+import {
+  install as installUnsafeEval
+} from '@pixi/unsafe-eval'
 
 import {
   Live2DModel,
@@ -110,8 +115,18 @@ type ModelRuntimeInfo = {
 }
 
 
-type ResizeDragState = {
+type ModelResizeCorner =
+  | 'nw'
+  | 'ne'
+  | 'sw'
+  | 'se'
+
+
+type ModelResizeState = {
   pointerId: number
+
+  corner:
+    ModelResizeCorner
 
   startDistance: number
 
@@ -120,8 +135,16 @@ type ResizeDragState = {
   startOffsetX: number
   startOffsetY: number
 
+  /*
+    Góc đối diện được giữ cố định.
+
+    Đây là tọa độ GLOBAL
+    trong full-screen Pixi canvas.
+  */
   fixedX: number
   fixedY: number
+
+  element: HTMLElement
 }
 
 
@@ -131,56 +154,67 @@ type ResizeDragState = {
   ============================================================
 */
 
+/*
+  Scale nhỏ nhất.
+*/
 const MIN_USER_SCALE =
-  0.6
+  0.4
 
 
 /*
-  Max cứng.
+  Scale lớn nhất.
 
-  Muốn sau này tăng khả năng
-  phóng to thì chỉnh số này.
+  4 = 400%.
+
+  Muốn lớn hơn nữa:
+  5 = 500%
+  6 = 600%
 */
-const ABSOLUTE_MAX_USER_SCALE =
+const MAX_USER_SCALE =
   4
-
-
-const VIEWPORT_PADDING =
-  5
-
-
-const RESIZE_HANDLE_HIT_SIZE =
-  46
-
-
-/*
-  Button 32px nên margin 18px
-  giúp button không bị cắt.
-*/
-const RESIZE_HANDLE_MARGIN =
-  18
-
-  /*
-  Đưa resize button vào gần
-  phần nhìn thấy của model hơn.
-
-  X càng lớn:
-    button càng dịch sang trái.
-
-  Y càng lớn:
-    button càng dịch xuống dưới.
-*/
-const RESIZE_HANDLE_INSET_X =
-  36
-
-
-const RESIZE_HANDLE_INSET_Y =
-  32
 
 
 /*
   ============================================================
-  PROPS / EMITS
+  MODEL FRAME
+  ============================================================
+
+  Padding thêm ngoài visual frame.
+
+  0 = không thêm khoảng trống.
+*/
+const MODEL_FRAME_PADDING =
+  0
+
+
+/*
+  model.getBounds() của một số Live2D
+  lớn hơn artwork thật.
+
+  Crop giúp đường đỏ ôm sát
+  nhân vật hơn.
+
+  Bạn có thể chỉnh 2 số này sau.
+*/
+const MODEL_FRAME_CROP_X =
+  0.20
+
+
+const MODEL_FRAME_CROP_Y =
+  0.04
+
+
+/*
+  Khi cursor gần frame,
+  frame không bị ẩn ngay.
+*/
+const MODEL_FRAME_HOVER_PADDING =
+  18
+
+
+/*
+  ============================================================
+  PROPS / EVENTS
   ============================================================
 */
 
@@ -191,10 +225,7 @@ const props =
 
     /*
       Vị trí character-shell
-      trong BrowserWindow fullscreen.
-
-      App.vue truyền:
-      :stage-offset="stageOffset"
+      trong BrowserWindow full-screen.
     */
     stageOffset?:
       StageOffset
@@ -226,13 +257,25 @@ const container =
   )
 
 
-const resizeHandle =
-  ref<HTMLButtonElement | null>(
+const modelFrameElement =
+  ref<HTMLDivElement | null>(
     null
   )
 
 
 const modelReady =
+  ref(
+    false
+  )
+
+
+const modelFrameReady =
+  ref(
+    false
+  )
+
+
+const modelFrameVisible =
   ref(
     false
   )
@@ -245,31 +288,8 @@ const isResizing =
 
 
 /*
-  Không hiện resize button
-  cho tới khi tính được
-  left/top hợp lệ.
-
-  Fix lỗi button xuất hiện
-  ở góc trái trên 0,0.
-*/
-const resizeHandlePositionReady =
-  ref(
-    false
-  )
-
-  /*
-  Resize handle chỉ hiện
-  khi cursor đang ở model
-  hoặc đang ở chính resize handle.
-*/
-const resizeHandleVisible =
-  ref(
-    false
-  )
-
-/*
   ============================================================
-  PIXI / LIVE2D
+  PIXI STATE
   ============================================================
 */
 
@@ -283,14 +303,27 @@ let model:
     null
 
 
+/*
+  Scale tự động ban đầu
+  để model vừa với vùng 500x700.
+*/
 let baseFitScale =
   1
 
 
+/*
+  Scale user điều khiển.
+*/
 let userScaleMultiplier =
   1
 
 
+/*
+  Offset riêng của model.
+
+  Sau này phần Options X/Y
+  có thể điều khiển 2 giá trị này.
+*/
 let manualOffsetX =
   0
 
@@ -298,6 +331,10 @@ let manualOffsetX =
 let manualOffsetY =
   0
 
+
+/*
+  Runtime model.
+*/
 
 let currentModelHasIdle =
   false
@@ -321,8 +358,21 @@ let loadVersion =
   0
 
 
-let resizeDragState:
-  ResizeDragState | null =
+/*
+  Resize state.
+*/
+
+let modelResizeState:
+  ModelResizeState | null =
+    null
+
+
+/*
+  Frame cache.
+*/
+
+let lastModelFrameGlobal:
+  ModelBounds | null =
     null
 
 
@@ -362,38 +412,68 @@ function getStageOffset():
 
 
 /*
-  BrowserWindow cursor
-  → local coordinate
-  của character-shell 500x700.
+  ============================================================
+  LOCAL CHARACTER VIEWPORT
+  ============================================================
+
+  Character-shell vẫn là 500x700.
+
+  Nó chỉ dùng để:
+  - tính scale mặc định
+  - tính transform mặc định
+
+  Nó KHÔNG còn là kích thước
+  của Pixi renderer.
 */
 
-function globalCursorToLocal(
-  x: number,
-  y: number
-): {
-  x: number
-  y: number
-} {
-  const offset =
-    getStageOffset()
+function getCharacterViewportSize():
+  {
+    width: number
+    height: number
+  } {
+  const currentContainer =
+    container.value
+
+
+  if (!currentContainer) {
+    return {
+      width:
+        500,
+
+      height:
+        700
+    }
+  }
 
 
   return {
-    x:
-      x -
-      offset.x,
+    width:
+      Math.max(
+        1,
+        currentContainer.clientWidth
+      ),
 
-    y:
-      y -
-      offset.y
+    height:
+      Math.max(
+        1,
+        currentContainer.clientHeight
+      )
   }
 }
 
 
 /*
   ============================================================
-  MODEL POSITION
+  BASE MODEL POSITION
   ============================================================
+
+  Pixi canvas giờ full-screen.
+
+  Vì vậy position model phải là:
+
+      character-shell screen position
+              +
+      local position trong 500x700
 */
 
 function getBaseModelPosition():
@@ -401,25 +481,23 @@ function getBaseModelPosition():
     x: number
     y: number
   } {
-  const currentApp =
-    app
+  const offset =
+    getStageOffset()
 
 
-  if (!currentApp) {
-    return {
-      x: 0,
-      y: 0
-    }
-  }
+  const viewport =
+    getCharacterViewportSize()
 
 
   return {
     x:
-      currentApp.screen.width *
+      offset.x +
+      viewport.width *
       props.character.transform.x,
 
     y:
-      currentApp.screen.height *
+      offset.y +
+      viewport.height *
       props.character.transform.y
   }
 }
@@ -436,18 +514,18 @@ function updateManualOffset():
   }
 
 
-  const basePosition =
+  const base =
     getBaseModelPosition()
 
 
   manualOffsetX =
     currentModel.position.x -
-    basePosition.x
+    base.x
 
 
   manualOffsetY =
     currentModel.position.y -
-    basePosition.y
+    base.y
 }
 
 
@@ -465,7 +543,7 @@ function resetManualTransform():
     0
 
 
-  resizeDragState =
+  modelResizeState =
     null
 
 
@@ -476,207 +554,296 @@ function resetManualTransform():
 
 /*
   ============================================================
-  MAX SCALE
+  FULL SCREEN CANVAS
   ============================================================
+
+  Đây là phần FIX lỗi model bị cắt.
+
+  Trước:
+
+    Pixi canvas = 500 x 700
+
+  Sau:
+
+    Pixi canvas = toàn BrowserWindow
+
+  Character-shell vẫn 500x700,
+  nhưng chỉ dùng làm coordinate anchor.
 */
 
-function getEffectiveMaxUserScale():
-  number {
-  /*
-    Không giới hạn theo viewport nữa.
+function syncCanvasPlacement():
+  void {
+  const currentApp =
+    app
 
-    User có thể phóng model
-    tới ABSOLUTE_MAX_USER_SCALE.
+
+  if (!currentApp) {
+    return
+  }
+
+
+  const canvas =
+    currentApp.view as unknown as HTMLCanvasElement
+
+
+  const offset =
+    getStageOffset()
+
+
+  /*
+    Canvas nằm trong character-shell.
+
+    Character-shell đã translate
+    tới stageOffset.
+
+    Vì vậy canvas phải dịch ngược
+    -stageOffset để trở lại vị trí
+    0,0 của BrowserWindow.
   */
 
-  return ABSOLUTE_MAX_USER_SCALE
+  canvas.style.position =
+    'absolute'
+
+
+  canvas.style.left =
+    `${-offset.x}px`
+
+
+  canvas.style.top =
+    `${-offset.y}px`
+
+
+  canvas.style.width =
+    `${window.innerWidth}px`
+
+
+  canvas.style.height =
+    `${window.innerHeight}px`
+
+
+  canvas.style.pointerEvents =
+    'none'
+
+
+  canvas.style.zIndex =
+    '0'
+}
+
+
+function resizeRendererToWindow():
+  void {
+  const currentApp =
+    app
+
+
+  if (!currentApp) {
+    return
+  }
+
+
+  const width =
+    Math.max(
+      1,
+      window.innerWidth
+    )
+
+
+  const height =
+    Math.max(
+      1,
+      window.innerHeight
+    )
+
+
+  currentApp.renderer.resize(
+    width,
+    height
+  )
+
+
+  syncCanvasPlacement()
+
+
+  /*
+    Renderer resize không được
+    tự scale lại model.
+
+    Scale và position là 2 hệ thống riêng.
+  */
+
+  repositionModelFromState()
+
+
+  emitModelBounds()
+
+
+  syncModelFrame()
 }
 
 
 /*
   ============================================================
-  KEEP MODEL INSIDE LOCAL 500x700
+  REPOSITION MODEL
   ============================================================
 
-  Đây chỉ giữ model trong
-  character-shell.
+  Khi character-shell được kéo,
+  stageOffset thay đổi.
 
-  Nó KHÔNG ngăn cả character-shell
-  đi ra ngoài màn hình.
-
-  App.vue chịu trách nhiệm
-  kéo character-shell.
+  Canvas vẫn đứng full-screen,
+  nên model được cập nhật position
+  theo stageOffset mới.
 */
 
-function keepModelInsideViewport():
+function repositionModelFromState():
   void {
   const currentModel =
     model
 
 
-  const currentApp =
-    app
-
-
-  if (
-    !currentModel ||
-    !currentApp
-  ) {
+  if (!currentModel) {
     return
   }
 
 
-  const bounds =
-    currentModel.getBounds()
+  const base =
+    getBaseModelPosition()
 
 
-  const left =
-    bounds.x
+  currentModel.position.set(
+    base.x +
+      manualOffsetX,
 
-
-  const right =
-    bounds.x +
-    bounds.width
-
-
-  const top =
-    bounds.y
-
-
-  const bottom =
-    bounds.y +
-    bounds.height
-
-
-  const minX =
-    VIEWPORT_PADDING
-
-
-  const maxX =
-    currentApp.screen.width -
-    VIEWPORT_PADDING
-
-
-  const minY =
-    VIEWPORT_PADDING
-
-
-  const maxY =
-    currentApp.screen.height -
-    VIEWPORT_PADDING
-
-
-  let dx =
-    0
-
-
-  let dy =
-    0
-
-
-  if (
-    left <
-    minX
-  ) {
-    dx =
-      minX -
-      left
-  }
-  else if (
-    right >
-    maxX
-  ) {
-    dx =
-      maxX -
-      right
-  }
-
-
-  if (
-    top <
-    minY
-  ) {
-    dy =
-      minY -
-      top
-  }
-  else if (
-    bottom >
-    maxY
-  ) {
-    dy =
-      maxY -
-      bottom
-  }
-
-
-  if (
-    dx !== 0 ||
-    dy !== 0
-  ) {
-    currentModel.position.x +=
-      dx
-
-
-    currentModel.position.y +=
-      dy
-  }
-
-
-  updateManualOffset()
+    base.y +
+      manualOffsetY
+  )
 }
 
 
 /*
   ============================================================
-  RESIZE HANDLE POSITION
+  POINTER → FULL SCREEN PIXI
+  ============================================================
+
+  Canvas Pixi bây giờ phủ toàn màn hình.
+
+  PointerEvent.clientX/Y chính là
+  Pixi screen coordinate.
+
+  Không cần chia theo 500x700 nữa.
+*/
+
+function pointerToStage(
+  event: PointerEvent
+): {
+  x: number
+  y: number
+} {
+  return {
+    x:
+      event.clientX,
+
+    y:
+      event.clientY
+  }
+}
+
+
+/*
+  ============================================================
+  VISUAL MODEL FRAME
   ============================================================
 */
 
-function getResizeHandlePosition():
-  {
-    x: number
-    y: number
-  } | null {
+function buildVisualFrame(
+  bounds: ModelBounds
+): ModelBounds {
+  const cropRatioX =
+    clamp(
+      MODEL_FRAME_CROP_X,
+      0,
+      0.45
+    )
+
+
+  const cropRatioY =
+    clamp(
+      MODEL_FRAME_CROP_Y,
+      0,
+      0.45
+    )
+
+
+  const desiredWidth =
+    bounds.width *
+    (
+      1 -
+      cropRatioX * 2
+    ) +
+    MODEL_FRAME_PADDING * 2
+
+
+  const desiredHeight =
+    bounds.height *
+    (
+      1 -
+      cropRatioY * 2
+    ) +
+    MODEL_FRAME_PADDING * 2
+
+
+  const width =
+    Math.max(
+      40,
+      desiredWidth
+    )
+
+
+  const height =
+    Math.max(
+      40,
+      desiredHeight
+    )
+
+
+  const centerX =
+    bounds.x +
+    bounds.width / 2
+
+
+  const centerY =
+    bounds.y +
+    bounds.height / 2
+
+
+  return {
+    x:
+      centerX -
+      width / 2,
+
+    y:
+      centerY -
+      height / 2,
+
+    width,
+
+    height
+  }
+}
+
+
+/*
+  ============================================================
+  GLOBAL MODEL FRAME
+  ============================================================
+*/
+
+function getModelFrameGlobal():
+  ModelBounds | null {
   const currentModel =
     model
 
 
-  const currentApp =
-    app
-
-
-  if (
-    !currentModel ||
-    !currentApp
-  ) {
-    return null
-  }
-
-
-  const screenWidth =
-    currentApp.screen.width
-
-
-  const screenHeight =
-    currentApp.screen.height
-
-
-  /*
-    PIXI chưa resize xong.
-  */
-  if (
-    !Number.isFinite(
-      screenWidth
-    ) ||
-    !Number.isFinite(
-      screenHeight
-    ) ||
-    screenWidth <=
-      RESIZE_HANDLE_MARGIN * 2 ||
-    screenHeight <=
-      RESIZE_HANDLE_MARGIN * 2
-  ) {
+  if (!currentModel) {
     return null
   }
 
@@ -685,40 +852,12 @@ function getResizeHandlePosition():
     currentModel.getBounds()
 
 
- /*
-  Bình thường top-right là:
-
-  x = bounds.x + bounds.width
-  y = bounds.y
-
-  Nhưng Live2D model có thể có
-  transparent/invisible bounds khá lớn.
-
-  Vì vậy kéo button vào trong
-  một chút để nó gần character hơn.
-*/
-
-const rawX =
-  bounds.x +
-  bounds.width -
-  RESIZE_HANDLE_INSET_X
-
-
-const rawY =
-  bounds.y +
-  RESIZE_HANDLE_INSET_Y
-
-
-  /*
-    Tránh button xuất hiện
-    ở 0,0 khi bounds lỗi.
-  */
   if (
     !Number.isFinite(
-      rawX
+      bounds.x
     ) ||
     !Number.isFinite(
-      rawY
+      bounds.y
     ) ||
     !Number.isFinite(
       bounds.width
@@ -735,143 +874,237 @@ const rawY =
   }
 
 
-  return {
+  return buildVisualFrame({
     x:
-      clamp(
-        rawX,
-        RESIZE_HANDLE_MARGIN,
-        screenWidth -
-          RESIZE_HANDLE_MARGIN
-      ),
+      bounds.x,
 
     y:
-      clamp(
-        rawY,
-        RESIZE_HANDLE_MARGIN,
-        screenHeight -
-          RESIZE_HANDLE_MARGIN
-      )
-  }
+      bounds.y,
+
+    width:
+      bounds.width,
+
+    height:
+      bounds.height
+  })
 }
 
 
-function syncResizeHandle():
+/*
+  ============================================================
+  SYNC DOM FRAME
+  ============================================================
+
+  Frame DOM nằm trong character-shell.
+
+  Model bounds là GLOBAL,
+  vì vậy phải trừ stageOffset
+  để chuyển về LOCAL DOM coordinate.
+*/
+
+function syncModelFrame():
   void {
-  const handle =
-    resizeHandle.value
+  const frameGlobal =
+    getModelFrameGlobal()
 
 
-  if (!handle) {
-    return
-  }
+  const frameElement =
+    modelFrameElement.value
 
 
-  const position =
-    getResizeHandlePosition()
-
-
-  /*
-    Chưa có position hợp lệ
-    → giấu button hoàn toàn.
-  */
-  if (!position) {
-    resizeHandlePositionReady.value =
+  if (
+    !frameGlobal ||
+    !frameElement
+  ) {
+    modelFrameReady.value =
       false
 
 
-    handle.style.visibility =
-      'hidden'
+    lastModelFrameGlobal =
+      null
 
 
     return
   }
 
 
-  handle.style.left =
-    `${position.x}px`
+  lastModelFrameGlobal =
+    frameGlobal
 
 
-  handle.style.top =
-    `${position.y}px`
+  const offset =
+    getStageOffset()
 
 
-  handle.style.visibility =
-    'visible'
+  const localX =
+    frameGlobal.x -
+    offset.x
 
 
-  resizeHandlePositionReady.value =
+  const localY =
+    frameGlobal.y -
+    offset.y
+
+
+  frameElement.style.left =
+    `${localX}px`
+
+
+  frameElement.style.top =
+    `${localY}px`
+
+
+  frameElement.style.width =
+    `${frameGlobal.width}px`
+
+
+  frameElement.style.height =
+    `${frameGlobal.height}px`
+
+
+  modelFrameReady.value =
     true
 }
 
 
 /*
   ============================================================
-  POINTER → LOCAL STAGE
+  FRAME HIT TEST
   ============================================================
 */
 
-function pointerToStage(
-  event: PointerEvent
+function pointInsideModelFrame(
+  x: number,
+  y: number
+): boolean {
+  const frame =
+    lastModelFrameGlobal ??
+    getModelFrameGlobal()
+
+
+  if (!frame) {
+    return false
+  }
+
+
+  const padding =
+    MODEL_FRAME_HOVER_PADDING
+
+
+  return (
+    x >=
+      frame.x -
+      padding &&
+
+    x <=
+      frame.x +
+      frame.width +
+      padding &&
+
+    y >=
+      frame.y -
+      padding &&
+
+    y <=
+      frame.y +
+      frame.height +
+      padding
+  )
+}
+
+
+/*
+  ============================================================
+  OPPOSITE CORNER
+  ============================================================
+*/
+
+function getOppositeCorner(
+  bounds: ModelBounds,
+  movingCorner: ModelResizeCorner
 ): {
   x: number
   y: number
 } {
-  const currentContainer =
-    container.value
+  const left =
+    bounds.x
 
 
-  const currentApp =
-    app
+  const top =
+    bounds.y
 
 
-  if (
-    !currentContainer ||
-    !currentApp
+  const right =
+    bounds.x +
+    bounds.width
+
+
+  const bottom =
+    bounds.y +
+    bounds.height
+
+
+  switch (
+    movingCorner
   ) {
-    return {
-      x: 0,
-      y: 0
-    }
-  }
+    /*
+      Kéo top-left
+      → bottom-right cố định.
+    */
+
+    case 'nw':
+      return {
+        x:
+          right,
+
+        y:
+          bottom
+      }
 
 
-  const rect =
-    currentContainer
-      .getBoundingClientRect()
+    /*
+      Kéo top-right
+      → bottom-left cố định.
+    */
+
+    case 'ne':
+      return {
+        x:
+          left,
+
+        y:
+          bottom
+      }
 
 
-  const scaleX =
-    rect.width > 0
-      ?
-      currentApp.screen.width /
-      rect.width
-      :
-      1
+    /*
+      Kéo bottom-left
+      → top-right cố định.
+    */
+
+    case 'sw':
+      return {
+        x:
+          right,
+
+        y:
+          top
+      }
 
 
-  const scaleY =
-    rect.height > 0
-      ?
-      currentApp.screen.height /
-      rect.height
-      :
-      1
+    /*
+      Kéo bottom-right
+      → top-left cố định.
+    */
 
+    case 'se':
+      return {
+        x:
+          left,
 
-  return {
-    x:
-      (
-        event.clientX -
-        rect.left
-      ) *
-      scaleX,
-
-    y:
-      (
-        event.clientY -
-        rect.top
-      ) *
-      scaleY
+        y:
+          top
+      }
   }
 }
 
@@ -882,8 +1115,9 @@ function pointerToStage(
   ============================================================
 */
 
-function onResizePointerDown(
-  event: PointerEvent
+function startModelResize(
+  event: PointerEvent,
+  corner: ModelResizeCorner
 ): void {
   const currentModel =
     model
@@ -897,8 +1131,25 @@ function onResizePointerDown(
   }
 
 
+  if (
+    event.button !==
+    0
+  ) {
+    return
+  }
+
+
   event.preventDefault()
   event.stopPropagation()
+
+
+  const frame =
+    getModelFrameGlobal()
+
+
+  if (!frame) {
+    return
+  }
 
 
   const pointer =
@@ -907,32 +1158,20 @@ function onResizePointerDown(
     )
 
 
-  const bounds =
-    currentModel.getBounds()
-
-
-  /*
-    Resize từ góc trên-phải.
-
-    Giữ góc dưới-trái cố định.
-  */
-
-  const fixedX =
-    bounds.x
-
-
-  const fixedY =
-    bounds.y +
-    bounds.height
+  const fixedCorner =
+    getOppositeCorner(
+      frame,
+      corner
+    )
 
 
   const startDistance =
     Math.hypot(
       pointer.x -
-        fixedX,
+      fixedCorner.x,
 
       pointer.y -
-        fixedY
+      fixedCorner.y
     )
 
 
@@ -947,9 +1186,15 @@ function onResizePointerDown(
   }
 
 
-  resizeDragState = {
+  const element =
+    event.currentTarget as HTMLElement
+
+
+  modelResizeState = {
     pointerId:
       event.pointerId,
+
+    corner,
 
     startDistance,
 
@@ -962,17 +1207,23 @@ function onResizePointerDown(
     startOffsetY:
       manualOffsetY,
 
-    fixedX,
+    fixedX:
+      fixedCorner.x,
 
-    fixedY
+    fixedY:
+      fixedCorner.y,
+
+    element
   }
 
 
   isResizing.value =
     true
 
-  resizeHandleVisible.value =
-  true
+
+  modelFrameVisible.value =
+    true
+
 
   lastHoverState =
     true
@@ -984,12 +1235,8 @@ function onResizePointerDown(
   )
 
 
-  const target =
-    event.currentTarget as HTMLElement
-
-
   try {
-    target.setPointerCapture(
+    element.setPointerCapture(
       event.pointerId
     )
   }
@@ -998,11 +1245,6 @@ function onResizePointerDown(
       Ignore.
     */
   }
-
-
-  console.log(
-    '[Live2D] Resize started'
-  )
 }
 
 
@@ -1012,11 +1254,11 @@ function onResizePointerDown(
   ============================================================
 */
 
-function onResizePointerMove(
+function moveModelResize(
   event: PointerEvent
 ): void {
-  const drag =
-    resizeDragState
+  const resize =
+    modelResizeState
 
 
   const currentModel =
@@ -1024,9 +1266,8 @@ function onResizePointerMove(
 
 
   if (
-    !drag ||
-    !currentModel ||
-    !app
+    !resize ||
+    !currentModel
   ) {
     return
   }
@@ -1034,8 +1275,23 @@ function onResizePointerMove(
 
   if (
     event.pointerId !==
-    drag.pointerId
+    resize.pointerId
   ) {
+    return
+  }
+
+
+  if (
+    (
+      event.buttons &
+      1
+    ) ===
+    0
+  ) {
+    stopModelResize(
+      event
+    )
+
     return
   }
 
@@ -1053,10 +1309,10 @@ function onResizePointerMove(
   const currentDistance =
     Math.hypot(
       pointer.x -
-        drag.fixedX,
+      resize.fixedX,
 
       pointer.y -
-        drag.fixedY
+      resize.fixedY
     )
 
 
@@ -1071,7 +1327,7 @@ function onResizePointerMove(
 
   const ratio =
     currentDistance /
-    drag.startDistance
+    resize.startDistance
 
 
   if (
@@ -1085,26 +1341,24 @@ function onResizePointerMove(
   }
 
 
-  const requestedScale =
-    drag.startUserScale *
-    ratio
+  /*
+    ==========================================================
+    SCALE MODEL
+    ==========================================================
 
-
-  const effectiveMaxScale =
-    getEffectiveMaxUserScale()
-
+    Không giới hạn theo 500x700 nữa.
+  */
 
   userScaleMultiplier =
     clamp(
-      requestedScale,
+      resize.startUserScale *
+      ratio,
+
       MIN_USER_SCALE,
-      effectiveMaxScale
+
+      MAX_USER_SCALE
     )
 
-
-  /*
-    Apply scale.
-  */
 
   currentModel.scale.set(
     baseFitScale *
@@ -1113,64 +1367,79 @@ function onResizePointerMove(
 
 
   /*
-    Đưa model về position
+    Reset về position
     lúc bắt đầu resize.
   */
 
-  const basePosition =
+  const base =
     getBaseModelPosition()
 
 
   currentModel.position.set(
-    basePosition.x +
-      drag.startOffsetX,
+    base.x +
+      resize.startOffsetX,
 
-    basePosition.y +
-      drag.startOffsetY
+    base.y +
+      resize.startOffsetY
   )
 
 
   /*
-    Giữ bottom-left cố định.
+    Frame mới sau scale.
   */
 
-  const scaledBounds =
-    currentModel.getBounds()
+  const newFrame =
+    getModelFrameGlobal()
 
 
-  const deltaX =
-    drag.fixedX -
-    scaledBounds.x
+  if (!newFrame) {
+    return
+  }
 
 
-  const deltaY =
-    drag.fixedY -
-    (
-      scaledBounds.y +
-      scaledBounds.height
+  const newFixedCorner =
+    getOppositeCorner(
+      newFrame,
+      resize.corner
     )
 
 
+  /*
+    Giữ góc đối diện đứng yên.
+  */
+
   currentModel.position.x +=
-    deltaX
+    resize.fixedX -
+    newFixedCorner.x
 
 
   currentModel.position.y +=
-    deltaY
+    resize.fixedY -
+    newFixedCorner.y
 
 
   /*
-    Không để resize làm model
-    vượt khỏi local canvas.
+    QUAN TRỌNG:
+
+    KHÔNG:
+      keepModelInsideViewport()
+
+    KHÔNG:
+      clamp model vào 500x700
+
+    KHÔNG:
+      resize Pixi canvas
+
+    Model được phép lớn tự do.
   */
 
   updateManualOffset()
 
 
-  syncResizeHandle()
-
-
   emitModelBounds()
+
+
+  syncModelFrame()
 }
 
 
@@ -1180,43 +1449,46 @@ function onResizePointerMove(
   ============================================================
 */
 
-function finishResize(
-  event: PointerEvent
+function stopModelResize(
+  event?: PointerEvent
 ): void {
-  const drag =
-    resizeDragState
+  const resize =
+    modelResizeState
 
 
-  if (!drag) {
+  if (!resize) {
     return
   }
 
 
   if (
+    event &&
     event.pointerId !==
-    drag.pointerId
+      resize.pointerId
   ) {
     return
   }
 
 
-  event.preventDefault()
-  event.stopPropagation()
-
-
-  const target =
-    event.currentTarget as HTMLElement
+  if (
+    event
+  ) {
+    event.preventDefault()
+    event.stopPropagation()
+  }
 
 
   try {
     if (
-      target.hasPointerCapture(
-        event.pointerId
-      )
+      resize.element
+        .hasPointerCapture(
+          resize.pointerId
+        )
     ) {
-      target.releasePointerCapture(
-        event.pointerId
-      )
+      resize.element
+        .releasePointerCapture(
+          resize.pointerId
+        )
     }
   }
   catch {
@@ -1226,29 +1498,21 @@ function finishResize(
   }
 
 
-  resizeDragState =
+  modelResizeState =
     null
 
 
   isResizing.value =
     false
 
-  syncResizeHandle()
+
+  updateManualOffset()
 
 
   emitModelBounds()
 
 
-  console.log(
-    '[Live2D] Resize finished:',
-    {
-      scale:
-        userScaleMultiplier,
-
-      max:
-        getEffectiveMaxUserScale()
-    }
-  )
+  syncModelFrame()
 }
 
 
@@ -1271,113 +1535,53 @@ let lastHoverState =
   false
 
 
-function pointInsideResizeHandle(
-  x: number,
-  y: number
-): boolean {
-  if (
-    !modelReady.value ||
-    !resizeHandlePositionReady.value
-  ) {
-    return false
-  }
-
-
-  const position =
-    getResizeHandlePosition()
-
-
-  if (!position) {
-    return false
-  }
-
-
-  const half =
-    RESIZE_HANDLE_HIT_SIZE /
-    2
-
-
-  return (
-    x >=
-      position.x -
-        half &&
-
-    x <=
-      position.x +
-        half &&
-
-    y >=
-      position.y -
-        half &&
-
-    y <=
-      position.y +
-        half
-  )
-}
-
-
 function updateModelHover(
-  x: number,
-  y: number
+  cursorX: number,
+  cursorY: number
 ): void {
   const currentModel =
     model
 
 
   if (!currentModel) {
-    resizeHandleVisible.value =
+    modelFrameVisible.value =
       false
 
     return
   }
 
 
+  /*
+    model.getBounds()
+    giờ là GLOBAL coordinate.
+  */
+
   const bounds =
     currentModel.getBounds()
 
 
-  /*
-    Cursor được tính là đang hover nếu:
+  const frameHovered =
+    modelFrameVisible.value &&
+    pointInsideModelFrame(
+      cursorX,
+      cursorY
+    )
 
-    1. đang resize
-    2. đang nằm trên model
-    3. đang nằm trên resize button
-
-    Điều số 3 rất quan trọng:
-    khi rê từ model sang button,
-    button sẽ KHÔNG biến mất.
-  */
 
   const hovered =
     isResizing.value ||
 
     bounds.contains(
-      x,
-      y
+      cursorX,
+      cursorY
     ) ||
 
-    pointInsideResizeHandle(
-      x,
-      y
-    )
+    frameHovered
 
 
-  /*
-    Điều khiển visibility
-    của resize button.
-  */
-
-  resizeHandleVisible.value =
+  modelFrameVisible.value =
     hovered
 
-
-  /*
-    Phần này tiếp tục gửi hover
-    sang App.vue để React /
-    Models / Reset hoạt động
-    như trước.
-  */
 
   if (
     hovered ===
@@ -1417,15 +1621,20 @@ async function updateCursorFocus():
 
 
   try {
+    /*
+      cursor hiện đã relative với
+      full-screen BrowserWindow.
+
+      Pixi canvas cũng full-screen.
+
+      Vì vậy KHÔNG trừ stageOffset.
+    */
+
     const cursor =
       await window.api
         .getCursorPosition()
 
 
-    /*
-      Model có thể bị đổi
-      trong lúc await IPC.
-    */
     if (
       model !==
       currentModel
@@ -1434,30 +1643,20 @@ async function updateCursorFocus():
     }
 
 
-    const localCursor =
-      globalCursorToLocal(
-        cursor.x,
-        cursor.y
-      )
-
-
     if (
       !isResizing.value
     ) {
       currentModel.focus(
-        localCursor.x,
-        localCursor.y
+        cursor.x,
+        cursor.y
       )
     }
 
 
     updateModelHover(
-      localCursor.x,
-      localCursor.y
+      cursor.x,
+      cursor.y
     )
-
-
-    syncResizeHandle()
   }
   catch (error) {
     console.error(
@@ -1515,7 +1714,7 @@ function stopCursorTracking():
 
 /*
   ============================================================
-  FILE NAME HELPER
+  FILE NAME
   ============================================================
 */
 
@@ -1542,7 +1741,7 @@ function fileNameWithoutExtension(
 
 /*
   ============================================================
-  DISCOVER MODEL RUNTIME
+  DISCOVER MODEL
   ============================================================
 */
 
@@ -1577,7 +1776,7 @@ async function discoverModelRuntime(
 
 
   /*
-    POSE
+    POSE.
   */
 
   const hasPose =
@@ -1588,7 +1787,7 @@ async function discoverModelRuntime(
 
 
   /*
-    EXPRESSIONS
+    EXPRESSIONS.
   */
 
   const expressions =
@@ -1643,7 +1842,7 @@ async function discoverModelRuntime(
 
 
   /*
-    MOTIONS
+    MOTIONS.
   */
 
   const motions:
@@ -1687,11 +1886,6 @@ async function discoverModelRuntime(
         return
       }
 
-
-      /*
-        Idle không hiện
-        trong Reaction Wheel.
-      */
 
       if (
         group
@@ -1781,44 +1975,6 @@ async function discoverModelRuntime(
   )
 
 
-  console.log(
-    '[Live2D] Has Idle:',
-    hasIdleMotion
-  )
-
-
-  console.log(
-    '[Live2D] Idle group:',
-    idleMotionGroup
-  )
-
-
-  console.log(
-    '[Live2D] Has Pose:',
-    hasPose
-  )
-
-
-  console.log(
-    '[Live2D] Expressions:',
-    expressions.length
-  )
-
-
-  console.log(
-    '[Live2D] Motion groups:',
-    Object.keys(
-      motions
-    )
-  )
-
-
-  console.log(
-    '[Live2D] Initialization motion:',
-    initializationMotion
-  )
-
-
   return {
     actions,
 
@@ -1838,13 +1994,7 @@ async function discoverModelRuntime(
   HIYORI INITIALIZATION
   ============================================================
 
-  PHẢI GIỮ.
-
-  Hiyori có motion điều khiển
-  PartOpacity nhưng không Pose.
-
-  Nếu bỏ logic này có thể
-  quay lại lỗi nhiều tay.
+  Giữ nguyên fix PartOpacity.
 */
 
 async function initializeMotionOnlyModel():
@@ -1859,38 +2009,18 @@ async function initializeMotionOnlyModel():
 
 
   if (
-    currentModelHasPose
+    currentModelHasPose ||
+    currentModelHasIdle ||
+    !currentInitializationMotion
   ) {
     return
   }
-
-
-  if (
-    currentModelHasIdle
-  ) {
-    return
-  }
-
-
-  const initialization =
-    currentInitializationMotion
-
-
-  if (!initialization) {
-    return
-  }
-
-
-  console.log(
-    '[Live2D] Initializing no-pose/no-idle model:',
-    initialization
-  )
 
 
   try {
     await currentModel.motion(
-      initialization.group,
-      initialization.index,
+      currentInitializationMotion.group,
+      currentInitializationMotion.index,
       MotionPriority.FORCE
     )
   }
@@ -1919,12 +2049,6 @@ async function runAction(
   if (!currentModel) {
     return
   }
-
-
-  console.log(
-    '[Live2D] Run action:',
-    action
-  )
 
 
   if (
@@ -1981,11 +2105,6 @@ async function resetReaction():
   }
 
 
-  console.log(
-    '[Live2D] Reset reaction'
-  )
-
-
   const motionManager =
     currentModel
       .internalModel
@@ -2000,10 +2119,6 @@ async function resetReaction():
     .expressionManager
     ?.resetExpression()
 
-
-  /*
-    MODEL CÓ IDLE.
-  */
 
   if (
     currentModelHasIdle &&
@@ -2028,11 +2143,6 @@ async function resetReaction():
   }
 
 
-  /*
-    MODEL HIYORI:
-    không Pose + có initialization motion.
-  */
-
   if (
     !currentModelHasPose &&
     currentInitializationMotion
@@ -2056,11 +2166,6 @@ async function resetReaction():
   }
 
 
-  /*
-    Không có baseline
-    → reload.
-  */
-
   await loadCharacter(
     props.character
   )
@@ -2075,8 +2180,18 @@ defineExpose({
 
 /*
   ============================================================
-  MODEL BOUNDS
+  EMIT MODEL BOUNDS
   ============================================================
+
+  App.vue vẫn cần LOCAL bounds
+  để đặt:
+  - drag zone
+  - React
+  - Models
+  - Reset
+
+  Vì vậy lấy global bounds
+  rồi trừ stageOffset.
 */
 
 function emitModelBounds():
@@ -2094,14 +2209,20 @@ function emitModelBounds():
     currentModel.getBounds()
 
 
+  const offset =
+    getStageOffset()
+
+
   emit(
     'modelBoundsChange',
     {
       x:
-        bounds.x,
+        bounds.x -
+        offset.x,
 
       y:
-        bounds.y,
+        bounds.y -
+        offset.y,
 
       width:
         bounds.width,
@@ -2115,8 +2236,14 @@ function emitModelBounds():
 
 /*
   ============================================================
-  FIT MODEL
+  INITIAL FIT
   ============================================================
+
+  Chỉ dùng để tính scale ban đầu.
+
+  Dù Pixi canvas full-screen,
+  model mặc định vẫn fit theo
+  character viewport 500x700.
 */
 
 function fitCurrentModel():
@@ -2125,22 +2252,14 @@ function fitCurrentModel():
     model
 
 
-  const currentApp =
-    app
-
-
-  if (
-    !currentModel ||
-    !currentApp
-  ) {
+  if (!currentModel) {
     return
   }
 
 
-  /*
-    Scale = 1 để đo
-    kích thước gốc.
-  */
+  const viewport =
+    getCharacterViewportSize()
+
 
   currentModel.scale.set(
     1
@@ -2156,62 +2275,40 @@ function fitCurrentModel():
 
 
   if (
-    modelWidth <= 0 ||
-    modelHeight <= 0
+    modelWidth <=
+      0 ||
+    modelHeight <=
+      0
   ) {
     return
   }
 
 
-  const availableWidth =
-    Math.max(
-      1,
-
-      currentApp.screen.width -
-      VIEWPORT_PADDING * 2
-    )
-
-
-  const availableHeight =
-    Math.max(
-      1,
-
-      currentApp.screen.height -
-      VIEWPORT_PADDING * 2
-    )
-
-
   const scaleX =
-    availableWidth /
+    viewport.width /
     modelWidth
 
 
   const scaleY =
-    availableHeight /
+    viewport.height /
     modelHeight
 
 
-  const fitScale =
+  baseFitScale =
     Math.min(
       scaleX,
       scaleY
-    )
-
-
-  baseFitScale =
-    fitScale *
-    props.character.transform.scale
-
-
-  const effectiveMaxScale =
-    getEffectiveMaxUserScale()
+    ) *
+    props.character
+      .transform
+      .scale
 
 
   userScaleMultiplier =
     clamp(
       userScaleMultiplier,
       MIN_USER_SCALE,
-      effectiveMaxScale
+      MAX_USER_SCALE
     )
 
 
@@ -2221,32 +2318,25 @@ function fitCurrentModel():
   )
 
 
-  const basePosition =
-    getBaseModelPosition()
+  repositionModelFromState()
 
 
-  currentModel.position.set(
-    basePosition.x +
-      manualOffsetX,
+  /*
+    KHÔNG clamp vào 500x700.
 
-    basePosition.y +
-      manualOffsetY
-  )
-
-
-  keepModelInsideViewport()
-
+    Đây là thay đổi quan trọng.
+  */
 
   emitModelBounds()
 
 
-  syncResizeHandle()
+  syncModelFrame()
 }
 
 
 /*
   ============================================================
-  UNLOAD
+  UNLOAD MODEL
   ============================================================
 */
 
@@ -2272,18 +2362,24 @@ function unloadCurrentModel():
     false
 
 
-  resizeHandlePositionReady.value =
+  modelFrameReady.value =
     false
 
-  resizeHandleVisible.value =
+
+  modelFrameVisible.value =
     false
 
-  resizeDragState =
+
+  modelResizeState =
     null
 
 
   isResizing.value =
     false
+
+
+  lastModelFrameGlobal =
+    null
 
 
   lastHoverState =
@@ -2311,12 +2407,6 @@ function unloadCurrentModel():
   }
 
 
-  /*
-    Set null trước khi destroy
-    để async cursor tracking
-    không dùng model cũ.
-  */
-
   model =
     null
 
@@ -2329,7 +2419,7 @@ function unloadCurrentModel():
   }
   catch {
     /*
-      Ignore.
+      Ignore cleanup error.
     */
   }
 
@@ -2384,22 +2474,6 @@ async function loadCharacter(
 
 
   try {
-    console.log(
-      '============================================================'
-    )
-
-
-    console.log(
-      '[Live2D] Loading:',
-      character.name
-    )
-
-
-    /*
-      STEP 1:
-      đọc model3.json.
-    */
-
     const runtimeInfo =
       await discoverModelRuntime(
         character.modelUrl
@@ -2415,30 +2489,14 @@ async function loadCharacter(
 
 
     /*
-      STEP 2:
-      HIYORI PART OPACITY FIX.
-
-      Có Pose:
-        Pose quản lý opacity.
-
-      Không Pose:
-        cho motion quản lý opacity.
+      Hiyori PartOpacity fix.
     */
 
-    config.cubism4.setOpacityFromMotion =
-      !runtimeInfo.hasPose
+    config
+      .cubism4
+      .setOpacityFromMotion =
+        !runtimeInfo.hasPose
 
-
-    console.log(
-      '[Live2D] setOpacityFromMotion:',
-      config.cubism4.setOpacityFromMotion
-    )
-
-
-    /*
-      STEP 3:
-      load Live2D.
-    */
 
     const newModel =
       await Live2DModel.from(
@@ -2453,30 +2511,7 @@ async function loadCharacter(
 
     if (
       currentLoadVersion !==
-      loadVersion
-    ) {
-      newModel.destroy({
-        children:
-          true,
-
-        texture:
-          true,
-
-        baseTexture:
-          true
-      })
-
-
-      return
-    }
-
-
-    /*
-      App có thể đã destroy
-      trong thời gian model load.
-    */
-
-    if (
+      loadVersion ||
       app !==
       currentApp
     ) {
@@ -2516,24 +2551,6 @@ async function loadCharacter(
       runtimeInfo.initializationMotion
 
 
-    console.log(
-      '[Live2D] Runtime state:',
-      {
-        hasIdle:
-          currentModelHasIdle,
-
-        idleGroup:
-          currentIdleMotionGroup,
-
-        hasPose:
-          currentModelHasPose,
-
-        initializationMotion:
-          currentInitializationMotion
-      }
-    )
-
-
     newModel.anchor.set(
       0.5,
       0.5
@@ -2549,10 +2566,6 @@ async function loadCharacter(
       true
 
 
-    /*
-      Fit model trước.
-    */
-
     fitCurrentModel()
 
 
@@ -2561,10 +2574,6 @@ async function loadCharacter(
       runtimeInfo.actions
     )
 
-
-    /*
-      Hiyori / no-pose initialization.
-    */
 
     await initializeMotionOnlyModel()
 
@@ -2577,29 +2586,10 @@ async function loadCharacter(
     }
 
 
-    /*
-      Motion có thể thay đổi
-      PartOpacity/bounds.
-    */
-
-    keepModelInsideViewport()
-
-
     emitModelBounds()
 
 
-    syncResizeHandle()
-
-
-    console.log(
-      '[Live2D] Loaded:',
-      character.name
-    )
-
-
-    console.log(
-      '============================================================'
-    )
+    syncModelFrame()
   }
   catch (error) {
     console.error(
@@ -2607,6 +2597,37 @@ async function loadCharacter(
       error
     )
   }
+}
+
+
+/*
+  ============================================================
+  STAGE OFFSET CHANGE
+  ============================================================
+
+  App.vue kéo character-shell
+  bằng translate3d.
+
+  Pixi canvas giờ full-screen,
+  nên khi stageOffset thay đổi
+  ta cập nhật cả:
+
+  1. vị trí canvas
+  2. vị trí model
+*/
+
+function handleStageOffsetChange():
+  void {
+  syncCanvasPlacement()
+
+
+  repositionModelFromState()
+
+
+  emitModelBounds()
+
+
+  syncModelFrame()
 }
 
 
@@ -2636,10 +2657,33 @@ onMounted(
     )
 
 
+    /*
+      ========================================================
+      FULL-SCREEN PIXI RENDERER
+      ========================================================
+
+      Không dùng:
+
+        resizeTo: container
+
+      vì container chỉ 500x700.
+
+      Renderer phải phủ toàn BrowserWindow.
+    */
+
     const newApp =
       new PIXI.Application({
-        resizeTo:
-          currentContainer,
+        width:
+          Math.max(
+            1,
+            window.innerWidth
+          ),
+
+        height:
+          Math.max(
+            1,
+            window.innerHeight
+          ),
 
         backgroundAlpha:
           0,
@@ -2674,21 +2718,36 @@ onMounted(
 
 
     /*
-      Handle position được sync
-      theo Pixi ticker.
+      Đưa canvas về global 0,0.
+    */
 
-      Không phụ thuộc hoàn toàn
-      vào cursor polling.
+    syncCanvasPlacement()
+
+
+    /*
+      Khung đỏ đi theo model/motion.
     */
 
     newApp.ticker.add(
-      syncResizeHandle
+      syncModelFrame
     )
 
 
     window.addEventListener(
       'resize',
-      fitCurrentModel
+      resizeRendererToWindow
+    )
+
+
+    window.addEventListener(
+      'pointerup',
+      stopModelResize
+    )
+
+
+    window.addEventListener(
+      'pointercancel',
+      stopModelResize
     )
 
 
@@ -2733,6 +2792,33 @@ watch(
 
 /*
   ============================================================
+  STAGE OFFSET WATCH
+  ============================================================
+
+  Character drag trong App.vue
+  thay characterX/Y.
+
+  Khi chúng đổi,
+  model Pixi cũng phải đi theo.
+*/
+
+watch(
+  () => [
+    props.stageOffset?.x ??
+      0,
+
+    props.stageOffset?.y ??
+      0
+  ],
+
+  () => {
+    handleStageOffsetChange()
+  }
+)
+
+
+/*
+  ============================================================
   DESTROY
   ============================================================
 */
@@ -2747,20 +2833,27 @@ onBeforeUnmount(
 
     window.removeEventListener(
       'resize',
-      fitCurrentModel
+      resizeRendererToWindow
     )
 
 
-    /*
-      Remove ticker callback
-      trước khi destroy app.
-    */
+    window.removeEventListener(
+      'pointerup',
+      stopModelResize
+    )
+
+
+    window.removeEventListener(
+      'pointercancel',
+      stopModelResize
+    )
+
 
     if (
       app
     ) {
       app.ticker.remove(
-        syncResizeHandle
+        syncModelFrame
       )
     }
 
@@ -2800,29 +2893,158 @@ onBeforeUnmount(
     ref="container"
     class="live2d-stage"
   >
-    <button
+
+    <!--
+      =========================================================
+      MODEL FRAME
+      =========================================================
+
+      Khung đỏ tự bám theo model.
+
+      4 nút tròn ở 4 góc:
+      - NW
+      - NE
+      - SW
+      - SE
+
+      Giữ và kéo để scale model.
+    -->
+
+    <div
       v-show="
         modelReady &&
-        resizeHandlePositionReady &&
-        resizeHandleVisible
+        modelFrameReady &&
+        modelFrameVisible
       "
-      ref="resizeHandle"
-      class="model-resize-handle"
-      :class="{
-        'model-resize-handle--active':
-          isResizing
-      }"
-      type="button"
-      title="Kéo để phóng to / thu nhỏ model"
-      @pointerdown="onResizePointerDown"
-      @pointermove="onResizePointerMove"
-      @pointerup="finishResize"
-      @pointercancel="finishResize"
+      ref="modelFrameElement"
+      class="model-resize-frame"
     >
-      <span class="model-resize-handle__icon">
-        ⤢
-      </span>
-    </button>
+
+      <!--
+        =======================================================
+        TOP LEFT
+        =======================================================
+      -->
+
+      <button
+        class="
+          model-resize-handle
+          model-resize-handle--nw
+        "
+        type="button"
+        title="Kéo để phóng to / thu nhỏ model"
+        @pointerdown="
+          startModelResize(
+            $event,
+            'nw'
+          )
+        "
+        @pointermove="
+          moveModelResize
+        "
+        @pointerup="
+          stopModelResize
+        "
+        @pointercancel="
+          stopModelResize
+        "
+      />
+
+
+      <!--
+        =======================================================
+        TOP RIGHT
+        =======================================================
+      -->
+
+      <button
+        class="
+          model-resize-handle
+          model-resize-handle--ne
+        "
+        type="button"
+        title="Kéo để phóng to / thu nhỏ model"
+        @pointerdown="
+          startModelResize(
+            $event,
+            'ne'
+          )
+        "
+        @pointermove="
+          moveModelResize
+        "
+        @pointerup="
+          stopModelResize
+        "
+        @pointercancel="
+          stopModelResize
+        "
+      />
+
+
+      <!--
+        =======================================================
+        BOTTOM LEFT
+        =======================================================
+      -->
+
+      <button
+        class="
+          model-resize-handle
+          model-resize-handle--sw
+        "
+        type="button"
+        title="Kéo để phóng to / thu nhỏ model"
+        @pointerdown="
+          startModelResize(
+            $event,
+            'sw'
+          )
+        "
+        @pointermove="
+          moveModelResize
+        "
+        @pointerup="
+          stopModelResize
+        "
+        @pointercancel="
+          stopModelResize
+        "
+      />
+
+
+      <!--
+        =======================================================
+        BOTTOM RIGHT
+        =======================================================
+      -->
+
+      <button
+        class="
+          model-resize-handle
+          model-resize-handle--se
+        "
+        type="button"
+        title="Kéo để phóng to / thu nhỏ model"
+        @pointerdown="
+          startModelResize(
+            $event,
+            'se'
+          )
+        "
+        @pointermove="
+          moveModelResize
+        "
+        @pointerup="
+          stopModelResize
+        "
+        @pointercancel="
+          stopModelResize
+        "
+      />
+
+    </div>
+
   </div>
 </template>
 
@@ -2848,20 +3070,18 @@ onBeforeUnmount(
     100%;
 
   /*
-    QUAN TRỌNG:
-
-    Không dùng hidden ở DOM container,
-    nếu không resize button có thể
-    bị cắt ở mép.
-
-    Canvas Pixi vẫn có kích thước
-    500x700 riêng.
+    Cho khung và handle
+    có thể vượt khỏi vùng 500x700.
   */
+
   overflow:
     visible;
 
   background:
     transparent;
+
+  pointer-events:
+    none;
 
   -webkit-app-region:
     no-drag;
@@ -2870,8 +3090,59 @@ onBeforeUnmount(
 
 /*
   ============================================================
-  RESIZE HANDLE
+  MODEL FRAME
   ============================================================
+*/
+
+.model-resize-frame {
+  position:
+    absolute;
+
+  box-sizing:
+    border-box;
+
+  border:
+    2px solid
+    rgba(
+      255,
+      82,
+      96,
+      0.96
+    );
+
+  border-radius:
+    12px;
+
+  box-shadow:
+    0 0 0 1px
+    rgba(
+      255,
+      255,
+      255,
+      0.30
+    );
+
+  /*
+    Bản thân đường đỏ không
+    bắt chuột.
+
+    4 nút tròn sẽ bắt chuột.
+  */
+
+  pointer-events:
+    none;
+
+  z-index:
+    20000;
+}
+
+
+/*
+  ============================================================
+  RESIZE HANDLE - COMMON
+  ============================================================
+
+  4 chấm tròn ở 4 góc.
 */
 
 .model-resize-handle {
@@ -2879,22 +3150,18 @@ onBeforeUnmount(
     absolute;
 
   width:
-    32px;
+    16px;
 
   height:
-    32px;
+    16px;
 
   padding:
     0;
 
-  display:
-    flex;
-
-  align-items:
-    center;
-
-  justify-content:
-    center;
+  /*
+    Tâm của button nằm chính xác
+    trên góc đường đỏ.
+  */
 
   transform:
     translate(
@@ -2906,39 +3173,36 @@ onBeforeUnmount(
     2px solid
     rgba(
       255,
-      255,
-      255,
-      0.9
+      82,
+      96,
+      1
     );
 
   border-radius:
-    9px;
+    50%;
 
   background:
     rgba(
-      80,
-      65,
-      120,
-      0.88
+      255,
+      255,
+      255,
+      1
     );
 
-  color:
-    white;
-
   box-shadow:
-    0 4px 14px
+    0 3px 10px
     rgba(
       0,
       0,
       0,
-      0.32
+      0.30
     );
 
-  cursor:
-    nesw-resize;
-
   z-index:
-    20000;
+    21000;
+
+  pointer-events:
+    auto;
 
   touch-action:
     none;
@@ -2946,27 +3210,132 @@ onBeforeUnmount(
   user-select:
     none;
 
-  pointer-events:
-    auto;
-
   -webkit-app-region:
     no-drag;
 
   transition:
-    transform 120ms ease,
-    background 120ms ease;
+    transform 100ms ease,
+    background 100ms ease,
+    box-shadow 100ms ease;
 }
 
 
+/*
+  ============================================================
+  TOP LEFT
+  ============================================================
+*/
+
+.model-resize-handle--nw {
+  left:
+    0;
+
+  top:
+    0;
+
+  cursor:
+    nwse-resize;
+}
+
+
+/*
+  ============================================================
+  TOP RIGHT
+  ============================================================
+*/
+
+.model-resize-handle--ne {
+  left:
+    100%;
+
+  top:
+    0;
+
+  cursor:
+    nesw-resize;
+}
+
+
+/*
+  ============================================================
+  BOTTOM LEFT
+  ============================================================
+*/
+
+.model-resize-handle--sw {
+  left:
+    0;
+
+  top:
+    100%;
+
+  cursor:
+    nesw-resize;
+}
+
+
+/*
+  ============================================================
+  BOTTOM RIGHT
+  ============================================================
+*/
+
+.model-resize-handle--se {
+  left:
+    100%;
+
+  top:
+    100%;
+
+  cursor:
+    nwse-resize;
+}
+
+
+/*
+  ============================================================
+  HOVER
+  ============================================================
+*/
+
 .model-resize-handle:hover {
-  background:
-    rgba(
-      142,
-      78,
-      220,
-      0.95
+  transform:
+    translate(
+      -50%,
+      -50%
+    )
+    scale(
+      1.18
     );
 
+  background:
+    rgba(
+      255,
+      230,
+      233,
+      1
+    );
+
+  box-shadow:
+    0 4px 13px
+    rgba(
+      0,
+      0,
+      0,
+      0.38
+    );
+}
+
+
+/*
+  ============================================================
+  ACTIVE
+  ============================================================
+
+  Khi đang giữ chuột trên handle.
+*/
+
+.model-resize-handle:active {
   transform:
     translate(
       -50%,
@@ -2975,55 +3344,13 @@ onBeforeUnmount(
     scale(
       1.08
     );
-}
 
-
-.model-resize-handle--active {
   background:
     rgba(
-      166,
-      91,
-      240,
+      255,
+      205,
+      211,
       1
     );
-
-  transform:
-    translate(
-      -50%,
-      -50%
-    )
-    scale(
-      1.12
-    );
-}
-
-
-.model-resize-handle__icon {
-  display:
-    flex;
-
-  align-items:
-    center;
-
-  justify-content:
-    center;
-
-  font-size:
-    22px;
-
-  font-weight:
-    600;
-
-  line-height:
-    1;
-
-  /*
-    Căn glyph ⤢ vào giữa button.
-  */
-  transform:
-    translateY(-1px);
-
-  pointer-events:
-    none;
 }
 </style>
