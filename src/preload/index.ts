@@ -110,6 +110,102 @@ const api = {
       ipcRenderer.invoke(
         'models:delete',
         id
+      ),
+
+
+  /*
+    ==========================================================
+    STARTUP MODEL SETTINGS
+    ==========================================================
+
+    Đây là model user muốn
+    tự động mở khi app khởi động.
+
+    Nó KHÔNG phải built-in fallback.
+
+    Built-in fallback hiện tại
+    đang là Akari, nhưng sau này
+    bạn có thể đổi sang model khác.
+  */
+
+
+  /*
+    ==========================================================
+    GET STARTUP MODEL
+    ==========================================================
+
+    Trả về:
+
+      string
+        → user đã chọn startup model
+
+      null
+        → user chưa chọn startup model
+
+    Ví dụ:
+
+      const id =
+        await window.api
+          .getStartupModelId()
+
+      id === 'hiyori'
+  */
+
+  getStartupModelId:
+    () =>
+      ipcRenderer.invoke(
+        'settings:get-startup-model'
+      ),
+
+
+  /*
+    ==========================================================
+    SET STARTUP MODEL
+    ==========================================================
+
+    Ví dụ:
+
+      await window.api
+        .setStartupModelId(
+          'hiyori'
+        )
+
+    Main process sẽ lưu:
+
+      startupModelId: "hiyori"
+  */
+
+  setStartupModelId:
+    (
+      modelId: string
+    ) =>
+      ipcRenderer.invoke(
+        'settings:set-startup-model',
+        modelId
+      ),
+
+
+  /*
+    ==========================================================
+    RESET STARTUP MODEL
+    ==========================================================
+
+    Đưa startupModelId về null.
+
+    KHÔNG reset trực tiếp về Akari.
+
+    Renderer sau đó sẽ dùng:
+
+      FALLBACK_CHARACTER_ID
+
+    Nhờ vậy sau này đổi built-in
+    model không cần sửa settings.
+  */
+
+  resetStartupModelId:
+    () =>
+      ipcRenderer.invoke(
+        'settings:reset-startup-model'
       )
 }
 
@@ -127,6 +223,7 @@ if (
     /*
       Electron Toolkit API.
     */
+
     contextBridge
       .exposeInMainWorld(
         'electron',
@@ -137,6 +234,7 @@ if (
     /*
       API riêng của project.
     */
+
     contextBridge
       .exposeInMainWorld(
         'api',

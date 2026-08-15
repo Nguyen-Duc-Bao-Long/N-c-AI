@@ -10,6 +10,12 @@ import {
 } from 'electron'
 
 import {
+  getStartupModelId,
+  setStartupModelId,
+  resetStartupModelId
+} from './settings'
+
+import {
   cp,
   mkdir,
   readFile,
@@ -2054,6 +2060,115 @@ function registerIpcHandlers():
 
 
         throw error
+      }
+    }
+  )
+
+
+
+  /*
+    ==========================================================
+    SETTINGS - STARTUP MODEL
+    ==========================================================
+
+    startupModelId là lựa chọn của user.
+
+    Main process KHÔNG biết model built-in
+    fallback hiện tại là Akari hay model nào khác.
+
+    Nếu startupModelId = null,
+    renderer sẽ tự dùng FALLBACK_CHARACTER_ID.
+  */
+
+  ipcMain.handle(
+    'settings:get-startup-model',
+
+    () => {
+      try {
+        return getStartupModelId()
+      }
+      catch (error) {
+        console.error(
+          '[Settings] Failed to get startup model:',
+          error
+        )
+
+
+        return null
+      }
+    }
+  )
+
+
+  ipcMain.handle(
+    'settings:set-startup-model',
+
+    (
+      _event,
+      modelId:
+        unknown
+    ) => {
+      if (
+        typeof modelId !==
+        'string'
+      ) {
+        return null
+      }
+
+
+      const normalizedModelId =
+        modelId.trim()
+
+
+      if (
+        normalizedModelId.length ===
+        0
+      ) {
+        return null
+      }
+
+
+      try {
+        const settings =
+          setStartupModelId(
+            normalizedModelId
+          )
+
+
+        return settings
+          .startupModelId
+      }
+      catch (error) {
+        console.error(
+          '[Settings] Failed to set startup model:',
+          error
+        )
+
+
+        return null
+      }
+    }
+  )
+
+
+  ipcMain.handle(
+    'settings:reset-startup-model',
+
+    () => {
+      try {
+        resetStartupModelId()
+
+
+        return true
+      }
+      catch (error) {
+        console.error(
+          '[Settings] Failed to reset startup model:',
+          error
+        )
+
+
+        return false
       }
     }
   )

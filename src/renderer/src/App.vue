@@ -26,7 +26,7 @@ import ModelPicker
 
 import {
   characters,
-  DEFAULT_CHARACTER_ID
+  FALLBACK_CHARACTER_ID
 } from './characters'
 
 import type {
@@ -310,13 +310,61 @@ const deletingModelId =
 
 /*
   ============================================================
+  STARTUP MODEL
+  ============================================================
+
+  Tách riêng 3 khái niệm:
+
+  1. FALLBACK_CHARACTER_ID
+     → built-in model dùng khi không có lựa chọn hợp lệ.
+
+  2. startupModelId
+     → model user đã chọn để tự mở khi khởi động app.
+
+  3. currentCharacterId
+     → model đang hiển thị trong phiên hiện tại.
+
+  Vì vậy đổi model trong phiên KHÔNG tự đổi startup model.
+*/
+
+const startupReady =
+  ref(
+    false
+  )
+
+
+const startupModelId =
+  ref<string | null>(
+    null
+  )
+
+
+/*
+  Nếu user chưa từng đặt startup model,
+  model được coi là Default trên UI
+  chính là built-in fallback hiện tại.
+
+  Sau này đổi built-in model chỉ cần
+  đổi FALLBACK_CHARACTER_ID.
+*/
+
+const effectiveDefaultModelId =
+  computed(
+    () =>
+      startupModelId.value ??
+      FALLBACK_CHARACTER_ID
+  )
+
+
+/*
+  ============================================================
   CURRENT MODEL
   ============================================================
 */
 
 const currentCharacterId =
   ref<string>(
-    DEFAULT_CHARACTER_ID
+    FALLBACK_CHARACTER_ID
   )
 
 
@@ -336,7 +384,7 @@ const currentCharacter =
       return (
         found ??
         characters[
-          DEFAULT_CHARACTER_ID
+          FALLBACK_CHARACTER_ID
         ]
       )
     }
@@ -355,6 +403,171 @@ async function loadImportedModels():
       '[Models] Failed to load model library:',
       error
     )
+  }
+}
+
+
+/*
+  ============================================================
+  INITIALIZE STARTUP MODEL
+  ============================================================
+
+  Luồng:
+
+    đọc startupModelId
+          ↓
+    null?
+      → dùng FALLBACK_CHARACTER_ID
+
+    có ID?
+      → kiểm tra ID còn tồn tại
+          ↓
+        có  → mở model đó
+        không → reset settings
+                rồi dùng fallback
+
+  Live2DStage chỉ mount sau khi
+  startupReady = true để tránh
+  flash built-in model trước khi
+  startup model được đọc xong.
+*/
+
+async function initializeStartupModel():
+  Promise<void> {
+  let nextCharacterId =
+    FALLBACK_CHARACTER_ID
+
+
+  try {
+    const savedStartupModelId =
+      await window.api
+        .getStartupModelId()
+
+
+    /*
+      User chưa từng chọn
+      startup model.
+    */
+
+    if (
+      !savedStartupModelId
+    ) {
+      startupModelId.value =
+        null
+
+
+      currentCharacterId.value =
+        nextCharacterId
+
+
+      return
+    }
+
+
+    const savedModelExists =
+      availableModels
+        .value
+        .some(
+          item =>
+            item.id ===
+            savedStartupModelId
+        )
+
+
+    /*
+      Startup model vẫn tồn tại.
+    */
+
+    if (
+      savedModelExists
+    ) {
+      startupModelId.value =
+        savedStartupModelId
+
+
+      nextCharacterId =
+        savedStartupModelId
+
+
+      currentCharacterId.value =
+        nextCharacterId
+
+
+      console.log(
+        '[StartupModel] Loaded:',
+        savedStartupModelId
+      )
+
+
+      return
+    }
+
+
+    /*
+      Settings đang trỏ tới model
+      không còn tồn tại.
+
+      Ví dụ:
+      - folder model bị user xóa tay
+      - dữ liệu model library bị mất
+      - model từng tồn tại ở bản cũ
+
+      Reset về null, KHÔNG ghi Akari
+      hay bất kỳ built-in ID nào
+      vào settings.
+    */
+
+    console.warn(
+      '[StartupModel] Saved model no longer exists:',
+      savedStartupModelId
+    )
+
+
+    const resetSucceeded =
+      await window.api
+        .resetStartupModelId()
+
+
+    if (
+      !resetSucceeded
+    ) {
+      console.warn(
+        '[StartupModel] Failed to reset invalid startup model setting.'
+      )
+    }
+
+
+    startupModelId.value =
+      null
+
+
+    currentCharacterId.value =
+      FALLBACK_CHARACTER_ID
+  }
+  catch (error) {
+    /*
+      Settings lỗi không được
+      làm app không mở được.
+
+      Luôn còn fallback built-in.
+    */
+
+    console.error(
+      '[StartupModel] Failed to initialize:',
+      error
+    )
+
+
+    startupModelId.value =
+      null
+
+
+    currentCharacterId.value =
+      FALLBACK_CHARACTER_ID
+  }
+  finally {
+    startupReady.value =
+      true
   }
 }
 
@@ -755,6 +968,160 @@ function selectModel(
 
 /*
   ============================================================
+  SET DEFAULT / STARTUP MODEL
+  ============================================================
+
+  Chọn model để xem KHÔNG tự đổi default.
+
+  Chỉ khi user bấm "Set Default"
+  trong ModelPicker thì hàm này mới chạy.
+
+  Đặc biệt:
+  - nếu user chọn built-in fallback hiện tại
+    làm Default, ta RESET startupModelId về null
+    thay vì ghi cứng ID built-in vào settings.
+  - nhờ vậy sau này thay Akari bằng built-in
+    khác, settings system không cần sửa.
+*/
+
+async function setDefaultModel(
+  targetModel: CharacterConfig
+): Promise<void> {
+  /*
+    Model này đã là Default rồi.
+  */
+
+  if (
+    targetModel.id ===
+    effectiveDefaultModelId.value
+  ) {
+    return
+  }
+
+
+  /*
+    Chỉ chấp nhận model thực sự
+    đang tồn tại trong library.
+  */
+
+  const exists =
+    availableModels
+      .value
+      .some(
+        item =>
+          item.id ===
+          targetModel.id
+      )
+
+
+  if (!exists) {
+    console.warn(
+      '[StartupModel] Cannot set missing model as default:',
+      targetModel.id
+    )
+
+    return
+  }
+
+
+  try {
+    /*
+      Built-in fallback:
+      lưu null thay vì lưu cứng ID.
+
+      Ví dụ hiện tại:
+        FALLBACK_CHARACTER_ID = 'akari'
+
+      Sau này đổi thành model khác
+      thì user vẫn tự động đi theo
+      fallback mới.
+    */
+
+    if (
+      targetModel.id ===
+      FALLBACK_CHARACTER_ID
+    ) {
+      const resetSucceeded =
+        await window.api
+          .resetStartupModelId()
+
+
+      if (
+        !resetSucceeded
+      ) {
+        console.error(
+          '[StartupModel] Failed to set fallback model as default.'
+        )
+
+        return
+      }
+
+
+      startupModelId.value =
+        null
+
+
+      console.log(
+        '[StartupModel] Default reset to built-in fallback:',
+        FALLBACK_CHARACTER_ID
+      )
+
+
+      return
+    }
+
+
+    /*
+      Imported model hoặc một model khác:
+      lưu ID thật vào settings.json.
+    */
+
+    const savedModelId =
+      await window.api
+        .setStartupModelId(
+          targetModel.id
+        )
+
+
+    /*
+      Main trả null khi save thất bại.
+      Đồng thời xác nhận ID trả về
+      đúng model user vừa chọn.
+    */
+
+    if (
+      savedModelId !==
+      targetModel.id
+    ) {
+      console.error(
+        '[StartupModel] Failed to save default model:',
+        targetModel.id
+      )
+
+      return
+    }
+
+
+    startupModelId.value =
+      savedModelId
+
+
+    console.log(
+      '[StartupModel] Default model changed:',
+      savedModelId
+    )
+  }
+  catch (error) {
+    console.error(
+      '[StartupModel] Failed to change default model:',
+      error
+    )
+  }
+}
+
+
+/*
+  ============================================================
   IMPORT MODEL
   ============================================================
 */
@@ -879,6 +1246,38 @@ async function deleteModel(
     }
 
 
+    /*
+      Nếu model vừa xóa đang là
+      startup model của user,
+      reset setting về null.
+
+      Renderer sẽ dùng
+      FALLBACK_CHARACTER_ID.
+    */
+
+    if (
+      startupModelId.value ===
+      targetModel.id
+    ) {
+      const resetSucceeded =
+        await window.api
+          .resetStartupModelId()
+
+
+      if (
+        resetSucceeded
+      ) {
+        startupModelId.value =
+          null
+      }
+      else {
+        console.warn(
+          '[StartupModel] Failed to reset after deleting startup model.'
+        )
+      }
+    }
+
+
     if (
       currentCharacterId.value ===
       targetModel.id
@@ -892,7 +1291,7 @@ async function deleteModel(
 
 
       currentCharacterId.value =
-        DEFAULT_CHARACTER_ID
+        FALLBACK_CHARACTER_ID
     }
 
 
@@ -1645,6 +2044,18 @@ onMounted(
 
 
     /*
+      Đọc model user đã chọn
+      để mở khi startup.
+
+      Phải chạy SAU loadImportedModels()
+      vì startup model có thể là
+      một model imported.
+    */
+
+    await initializeStartupModel()
+
+
+    /*
       Window.
     */
 
@@ -1791,6 +2202,7 @@ onBeforeUnmount(
       -->
 
       <Live2DStage
+        v-if="startupReady"
         ref="live2dStage"
         :character="currentCharacter"
         :stage-offset="stageOffset"
@@ -1908,11 +2320,12 @@ onBeforeUnmount(
         <ModelPicker
           :models="availableModels"
           :selected-id="currentCharacterId"
-          :default-id="DEFAULT_CHARACTER_ID"
+          :default-id="effectiveDefaultModelId"
           :importing="modelImporting"
           :deletable-ids="deletableModelIds"
           :deleting-id="deletingModelId"
           @select="selectModel"
+          @set-default="setDefaultModel"
           @import="importModel"
           @delete="deleteModel"
           @close="closeModelPicker"

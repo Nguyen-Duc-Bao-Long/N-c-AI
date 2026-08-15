@@ -72,6 +72,30 @@ interface AppAPI {
     (
       id: string
     ) => Promise<boolean>
+
+/*
+  ============================================================
+  STARTUP MODEL SETTINGS
+  ============================================================
+*/
+
+getStartupModelId:
+  () => Promise<
+    string | null
+  >
+
+setStartupModelId:
+  (
+    modelId: string
+  ) => Promise<
+    string | null
+  >
+
+resetStartupModelId:
+  () => Promise<
+    boolean
+  >
+
 }
 
 

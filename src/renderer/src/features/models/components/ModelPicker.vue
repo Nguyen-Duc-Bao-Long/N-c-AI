@@ -49,6 +49,9 @@ const emit =
     delete:
       [model: CharacterConfig]
 
+    setDefault:
+      [model: CharacterConfig]
+
     close:
       []
   }>()
@@ -121,6 +124,60 @@ function selectModel(
 
   emit(
     'select',
+    model
+  )
+}
+
+
+/*
+  ============================================================
+  SET DEFAULT
+  ============================================================
+
+  Chỉ model đang được chọn mới
+  hiện nút "Set Default".
+
+  Chọn model để xem KHÔNG tự động
+  thay đổi startup/default model.
+*/
+
+function setDefaultModel(
+  event: MouseEvent,
+  model: CharacterConfig
+): void {
+  event.preventDefault()
+  event.stopPropagation()
+
+
+  if (
+    !isSelected(
+      model
+    )
+  ) {
+    return
+  }
+
+
+  if (
+    isDefault(
+      model
+    )
+  ) {
+    return
+  }
+
+
+  if (
+    isDeleting(
+      model
+    )
+  ) {
+    return
+  }
+
+
+  emit(
+    'setDefault',
     model
   )
 }
@@ -225,7 +282,15 @@ function deleteModel(
 
     <div class="model-picker__list">
 
-      <button
+      <!--
+        Outer card dùng div thay vì button.
+
+        Lý do:
+        card còn chứa nút Delete và Set Default.
+        HTML không cho phép button nằm trong button.
+      -->
+
+      <div
         v-for="model in models"
         :key="model.id"
         class="model-card"
@@ -236,8 +301,19 @@ function deleteModel(
           'model-card--deleting':
             isDeleting(model)
         }"
-        type="button"
+        role="button"
+        tabindex="0"
         @click="
+          selectModel(
+            model
+          )
+        "
+        @keydown.enter.self="
+          selectModel(
+            model
+          )
+        "
+        @keydown.space.self.prevent="
           selectModel(
             model
           )
@@ -270,6 +346,11 @@ function deleteModel(
 
           <div class="model-card__meta">
 
+            <!--
+              Default đi theo defaultId
+              do App.vue truyền vào.
+            -->
+
             <span
               v-if="
                 isDefault(
@@ -285,6 +366,10 @@ function deleteModel(
             </span>
 
 
+            <!--
+              Imported model chưa phải default.
+            -->
+
             <span
               v-else-if="
                 isDeletable(
@@ -299,6 +384,46 @@ function deleteModel(
               Imported
             </span>
 
+
+            <!--
+              Built-in model nhưng hiện không
+              phải default.
+            -->
+
+            <span
+              v-else
+              class="
+                model-card__badge
+                model-card__badge--builtin
+              "
+            >
+              Built-in
+            </span>
+
+
+            <!--
+              Chỉ model ĐANG CHỌN và CHƯA DEFAULT
+              mới hiện nút này.
+            -->
+
+            <button
+              v-if="
+                isSelected(model) &&
+                !isDefault(model)
+              "
+              class="model-card__set-default"
+              type="button"
+              title="Use this model when the app starts"
+              @click="
+                setDefaultModel(
+                  $event,
+                  model
+                )
+              "
+            >
+              Set Default
+            </button>
+
           </div>
 
         </div>
@@ -308,8 +433,6 @@ function deleteModel(
           =====================================================
           RIGHT ACTION
           =====================================================
-
-          QUAN TRỌNG:
 
           selected
                ↓
@@ -387,7 +510,7 @@ function deleteModel(
 
         </div>
 
-      </button>
+      </div>
 
     </div>
 
@@ -492,7 +615,6 @@ function deleteModel(
   box-shadow:
     0 18px 50px
     rgba(
-      0,
       0,
       0,
       0.38
@@ -698,6 +820,9 @@ function deleteModel(
   padding:
     12px;
 
+  box-sizing:
+    border-box;
+
   border:
     1px solid
     transparent;
@@ -731,6 +856,9 @@ function deleteModel(
   cursor:
     pointer;
 
+  outline:
+    none;
+
   -webkit-app-region:
     no-drag;
 
@@ -748,6 +876,18 @@ function deleteModel(
       255,
       255,
       0.085
+    );
+}
+
+
+.model-card:focus-visible {
+  box-shadow:
+    0 0 0 2px
+    rgba(
+      168,
+      117,
+      255,
+      0.38
     );
 }
 
@@ -877,6 +1017,18 @@ function deleteModel(
 
   margin-top:
     5px;
+
+  display:
+    flex;
+
+  align-items:
+    center;
+
+  gap:
+    6px;
+
+  flex-wrap:
+    wrap;
 }
 
 
@@ -939,6 +1091,127 @@ function deleteModel(
       255,
       255,
       0.55
+    );
+}
+
+
+.model-card__badge--builtin {
+  background:
+    rgba(
+      92,
+      141,
+      255,
+      0.16
+    );
+
+  color:
+    rgba(
+      183,
+      204,
+      255,
+      0.92
+    );
+}
+
+
+/*
+  ============================================================
+  SET DEFAULT
+  ============================================================
+*/
+
+.model-card__set-default {
+  min-height:
+    20px;
+
+  padding:
+    1px 8px;
+
+  border:
+    1px solid
+    rgba(
+      168,
+      117,
+      255,
+      0.38
+    );
+
+  border-radius:
+    6px;
+
+  display:
+    inline-flex;
+
+  align-items:
+    center;
+
+  justify-content:
+    center;
+
+  background:
+    rgba(
+      151,
+      88,
+      255,
+      0.10
+    );
+
+  color:
+    #c5a4ff;
+
+  font-size:
+    11px;
+
+  font-weight:
+    700;
+
+  line-height:
+    1.2;
+
+  cursor:
+    pointer;
+
+  pointer-events:
+    auto;
+
+  -webkit-app-region:
+    no-drag;
+
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    transform 120ms ease;
+}
+
+
+.model-card__set-default:hover {
+  background:
+    rgba(
+      151,
+      88,
+      255,
+      0.22
+    );
+
+  border-color:
+    rgba(
+      177,
+      132,
+      255,
+      0.72
+    );
+
+  transform:
+    translateY(
+      -1px
+    );
+}
+
+
+.model-card__set-default:active {
+  transform:
+    scale(
+      0.96
     );
 }
 
@@ -1038,10 +1311,6 @@ function deleteModel(
 */
 
 .model-card__status-icon--selected {
-  /*
-    Span nên không có cursor button.
-  */
-
   cursor:
     default;
 
@@ -1067,6 +1336,9 @@ function deleteModel(
 .model-card__status-icon--delete {
   cursor:
     pointer;
+
+  pointer-events:
+    auto;
 
   -webkit-app-region:
     no-drag;
