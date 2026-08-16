@@ -26,8 +26,37 @@ import type {
   CharacterConfig
 } from '../../../characters/types'
 
+import {
+  analyzeMotion3Json
+} from '../actionClassifier'
+
 import type {
-  Live2DAction
+  MotionAnalysis
+} from '../actionClassifier'
+
+import {
+  MultiActionController
+} from '../multiActionController'
+
+import type {
+  MultiActionStateSnapshot
+} from '../multiActionController'
+
+import {
+  ExpressionActionController,
+  analyzeExpression3Json
+} from '../expressionActionController'
+
+import type {
+  ExpressionAnalysis
+} from '../expressionActionController'
+
+import type {
+  Live2DAction,
+  Live2DActionMetadata,
+  Live2DActionMode,
+  Live2DExpressionAction,
+  Live2DMotionAction
 } from '../types'
 
 
@@ -100,8 +129,32 @@ type RuntimeMotionRef = {
 }
 
 
+type RuntimeMotionActionInfo = {
+  action:
+    Live2DMotionAction
+
+  analysis:
+    MotionAnalysis | null
+}
+
+
+type RuntimeExpressionActionInfo = {
+  action:
+    Live2DExpressionAction
+
+  analysis:
+    ExpressionAnalysis | null
+}
+
+
 type ModelRuntimeInfo = {
   actions: Live2DAction[]
+
+  expressionActions:
+    RuntimeExpressionActionInfo[]
+
+  motionActions:
+    RuntimeMotionActionInfo[]
 
   hasIdleMotion: boolean
 
@@ -112,6 +165,68 @@ type ModelRuntimeInfo = {
 
   initializationMotion:
     RuntimeMotionRef | null
+}
+
+
+/*
+  Chỉ dùng những API Cubism cần cho
+  MultiAction.
+
+  Dùng index thay vì string ID trực tiếp
+  để tương thích ổn định với Cubism 4.
+*/
+
+type CubismCoreModelAdapter = {
+  getModel:
+    () => {
+      parameters: {
+        count:
+          number
+
+        ids:
+          ArrayLike<string>
+      }
+
+      parts: {
+        count:
+          number
+
+        ids:
+          ArrayLike<string>
+      }
+    }
+
+  getParameterValueByIndex:
+    (
+      index: number
+    ) => number
+
+  setParameterValueByIndex:
+    (
+      index: number,
+      value: number,
+      weight?: number
+    ) => void
+
+  addParameterValueByIndex?:
+    (
+      index: number,
+      value: number,
+      weight?: number
+    ) => void
+
+  multiplyParameterValueByIndex?:
+    (
+      index: number,
+      value: number,
+      weight?: number
+    ) => void
+
+  setPartOpacityByIndex:
+    (
+      index: number,
+      opacity: number
+    ) => void
 }
 
 
@@ -240,6 +355,9 @@ const emit =
     actionsReady:
       [actions: Live2DAction[]]
 
+    actionStateChange:
+      [state: MultiActionStateSnapshot]
+
     modelBoundsChange:
       [bounds: ModelBounds]
   }>()
@@ -356,6 +474,84 @@ let currentInitializationMotion:
 
 let loadVersion =
   0
+
+
+/*
+  ============================================================
+  MULTI ACTION STATE
+  ============================================================
+*/
+
+const multiActionController =
+  new MultiActionController()
+
+
+const expressionActionController =
+  new ExpressionActionController()
+
+
+const parameterIndexById =
+  new Map<
+    string,
+    number
+  >()
+
+
+const partIndexById =
+  new Map<
+    string,
+    number
+  >()
+
+
+let beforeModelUpdateHandler:
+  (() => void) | null =
+    null
+
+
+function getCombinedActionState():
+  MultiActionStateSnapshot {
+  const motionState =
+    multiActionController.getState()
+
+
+  return {
+    activeToggleActionIds: [
+      ...motionState.activeToggleActionIds,
+      ...expressionActionController
+        .getActiveActionIds()
+    ],
+
+    activeOneshotActionIds: [
+      ...motionState.activeOneshotActionIds
+    ]
+  }
+}
+
+
+function emitCombinedActionState():
+  void {
+  emit(
+    'actionStateChange',
+    getCombinedActionState()
+  )
+}
+
+
+const stopMultiActionStateSubscription =
+  multiActionController.subscribe(
+    () => {
+      emitCombinedActionState()
+    }
+  )
+
+
+const stopExpressionActionStateSubscription =
+  expressionActionController.subscribe(
+    () => {
+      emitCombinedActionState()
+    }
+  )
 
 
 /*
@@ -1741,6 +1937,244 @@ function fileNameWithoutExtension(
 
 /*
   ============================================================
+  MOTION RESOURCE URL
+  ============================================================
+*/
+
+function resolveModelResourceUrl(
+  modelUrl: string,
+  resourcePath: string
+): string {
+  const normalizedResourcePath =
+    resourcePath.replace(
+      /\\/g,
+      '/'
+    )
+
+
+  const absoluteModelUrl =
+    new URL(
+      modelUrl,
+      window.location.href
+    )
+
+
+  return new URL(
+    normalizedResourcePath,
+    absoluteModelUrl
+  ).toString()
+}
+
+
+/*
+  ============================================================
+  FALLBACK MOTION METADATA
+  ============================================================
+*/
+
+function createFallbackMotionMetadata(
+  sourceFile:
+    string | null
+): Live2DActionMetadata {
+  return {
+    mode:
+      'oneshot',
+
+    suggestedMode:
+      'oneshot',
+
+    modeSource:
+      'fallback',
+
+    duration:
+      null,
+
+    loop:
+      false,
+
+    sourceFile,
+
+    parameterIds:
+      [],
+
+    partOpacityIds:
+      [],
+
+    persistentScore:
+      0
+  }
+}
+
+
+/*
+  ============================================================
+  LOAD + ANALYZE EXPRESSION
+  ============================================================
+
+  *.exp3.json KHÔNG phải motion theo thời gian.
+
+  Nó là một tập giá trị Parameter tĩnh với Blend:
+    - Add
+    - Multiply
+    - Overwrite
+
+  Vì vậy các expression kiểu:
+    - Wave L
+    - Wave R
+    - Tail Up
+    - Hat on
+    - Glasses on
+
+  sẽ được xem như toggle state và có thể cùng tồn tại.
+*/
+
+async function loadExpressionAnalysis(
+  modelUrl: string,
+  expressionFile?: string
+): Promise<ExpressionAnalysis | null> {
+  if (!expressionFile) {
+    return null
+  }
+
+
+  try {
+    const expressionUrl =
+      resolveModelResourceUrl(
+        modelUrl,
+        expressionFile
+      )
+
+
+    const response =
+      await fetch(
+        expressionUrl
+      )
+
+
+    if (!response.ok) {
+      throw new Error(
+        `HTTP ${response.status}`
+      )
+    }
+
+
+    const expressionJson:
+      unknown =
+        await response.json()
+
+
+    return analyzeExpression3Json(
+      expressionJson
+    )
+  }
+  catch (error) {
+    console.warn(
+      `[Live2D] Cannot analyze expression: ${expressionFile}`,
+      error
+    )
+
+
+    return null
+  }
+}
+
+
+/*
+  ============================================================
+  LOAD + ANALYZE MOTION
+  ============================================================
+
+  Bước 3 chỉ cần metadata.
+
+  Từ Bước 6, MultiActionController cần
+  toàn bộ parsed curve để tự evaluate
+  motion theo thời gian.
+*/
+
+async function loadMotionAnalysis(
+  modelUrl: string,
+  motionFile?: string
+): Promise<MotionAnalysis | null> {
+  if (
+    !motionFile
+  ) {
+    return null
+  }
+
+
+  try {
+    const motionUrl =
+      resolveModelResourceUrl(
+        modelUrl,
+        motionFile
+      )
+
+
+    const response =
+      await fetch(
+        motionUrl
+      )
+
+
+    if (
+      !response.ok
+    ) {
+      throw new Error(
+        `HTTP ${response.status}`
+      )
+    }
+
+
+    const motionJson:
+      unknown =
+        await response.json()
+
+
+    return analyzeMotion3Json(
+      motionJson,
+      motionFile
+    )
+  }
+  catch (error) {
+    console.warn(
+      `[Live2D] Cannot analyze motion: ${motionFile}`,
+      error
+    )
+
+
+    return null
+  }
+}
+
+
+/*
+  ============================================================
+  MULTI ACTION SUPPORT CHECK
+  ============================================================
+
+  Motion không có Parameter hoặc PartOpacity
+  sẽ tiếp tục dùng native MotionManager.
+
+  Nhờ vậy các motion đặc biệt không có curve
+  mà controller hiểu vẫn không bị mất chức năng.
+*/
+
+function supportsMultiAction(
+  analysis:
+    MotionAnalysis
+): boolean {
+  return analysis.curves.some(
+    curve =>
+      curve.target ===
+        'Parameter' ||
+      curve.target ===
+        'PartOpacity'
+  )
+}
+
+
+/*
+  ============================================================
   DISCOVER MODEL
   ============================================================
 */
@@ -1788,12 +2222,25 @@ async function discoverModelRuntime(
 
   /*
     EXPRESSIONS.
+
+    QUAN TRỌNG:
+
+    Model trong video của bạn dùng phần lớn action
+    dưới dạng *.exp3.json chứ không phải motion3.json.
+
+    Expression của Cubism là trạng thái Parameter tĩnh,
+    nên mặc định ta coi chúng là toggle.
   */
 
   const expressions =
     fileReferences
       ?.Expressions ??
     []
+
+
+  const expressionActionJobs:
+    Promise<RuntimeExpressionActionInfo>[] =
+      []
 
 
   expressions.forEach(
@@ -1825,18 +2272,101 @@ async function discoverModelRuntime(
       }
 
 
-      actions.push({
-        id:
-          `expression:${name}:${index}`,
+      expressionActionJobs.push(
+        (
+          async (): Promise<RuntimeExpressionActionInfo> => {
+            const analysis =
+              await loadExpressionAnalysis(
+                modelUrl,
+                expression.File
+              )
 
-        type:
-          'expression',
 
-        label:
-          name,
+            const parameterIds =
+              analysis
+                ?.parameters
+                .map(
+                  parameter =>
+                    parameter.id
+                ) ??
+              []
 
-        name
-      })
+
+            const action:
+              Live2DExpressionAction = {
+                id:
+                  `expression:${name}:${index}`,
+
+                type:
+                  'expression',
+
+                label:
+                  name,
+
+                name,
+
+                metadata: {
+                  mode:
+                    'toggle',
+
+                  suggestedMode:
+                    'toggle',
+
+                  modeSource:
+                    analysis
+                      ? 'auto'
+                      : 'fallback',
+
+                  duration:
+                    null,
+
+                  loop:
+                    false,
+
+                  sourceFile:
+                    expression.File ??
+                    null,
+
+                  parameterIds,
+
+                  partOpacityIds:
+                    [],
+
+                  persistentScore:
+                    analysis
+                      ? 1
+                      : 0
+                }
+              }
+
+
+            console.log(
+              `[Live2D] Expression ${index} "${name}"`,
+              {
+                file:
+                  expression.File,
+
+                parameters:
+                  analysis
+                    ?.parameters ??
+                  [],
+
+                multiAction:
+                  Boolean(
+                    analysis &&
+                    analysis.parameters.length > 0
+                  )
+              }
+            )
+
+
+            return {
+              action,
+              analysis
+            }
+          }
+        )()
+      )
     }
   )
 
@@ -1869,114 +2399,270 @@ async function discoverModelRuntime(
       null
 
 
-  Object.entries(
-    motions
-  ).forEach(
-    ([
+  /*
+    Mỗi motion được fetch + parse song song.
+  */
+
+  const motionActionJobs:
+    Promise<RuntimeMotionActionInfo>[] =
+      []
+
+
+  for (
+    const [
       group,
       groupMotions
-    ]) => {
-      if (
-        !Array.isArray(
-          groupMotions
-        ) ||
-        groupMotions.length ===
-          0
-      ) {
-        return
-      }
+    ] of Object.entries(
+      motions
+    )
+  ) {
+    if (
+      !Array.isArray(
+        groupMotions
+      ) ||
+      groupMotions.length ===
+        0
+    ) {
+      continue
+    }
 
 
-      if (
+    /*
+      Idle vẫn do native MotionManager quản lý.
+
+      MultiAction chỉ override đúng những
+      Parameter / PartOpacity mà action active
+      đang sử dụng.
+    */
+
+    if (
+      group
+        .toLowerCase() ===
+      'idle'
+    ) {
+      hasIdleMotion =
+        true
+
+
+      idleMotionGroup ??=
         group
-          .toLowerCase() ===
-        'idle'
-      ) {
-        hasIdleMotion =
-          true
 
 
-        idleMotionGroup ??=
-          group
+      continue
+    }
 
 
-        return
-      }
-
-
-      groupMotions.forEach(
-        (
-          motion,
-          index
-        ) => {
-          if (
-            !initializationMotion
-          ) {
-            initializationMotion = {
-              group,
-
-              index,
-
-              file:
-                motion.File
-            }
-          }
-
-
-          let label:
-            string
-
-
-          if (
-            groupMotions.length >
-            1
-          ) {
-            label =
-              `${group} ${index + 1}`
-          }
-          else {
-            label =
-              group
-          }
-
-
-          if (
-            motion.File &&
-            (
-              group ===
-                'Motion' ||
-              group ===
-                'Motions'
-            )
-          ) {
-            label =
-              fileNameWithoutExtension(
-                motion.File
-              )
-          }
-
-
-          actions.push({
-            id:
-              `motion:${group}:${index}`,
-
-            type:
-              'motion',
-
-            label,
-
+    groupMotions.forEach(
+      (
+        motion,
+        index
+      ) => {
+        if (
+          !initializationMotion
+        ) {
+          initializationMotion = {
             group,
 
-            index
-          })
+            index,
+
+            file:
+              motion.File
+          }
         }
+
+
+        let label:
+          string
+
+
+        if (
+          groupMotions.length >
+          1
+        ) {
+          label =
+            `${group} ${index + 1}`
+        }
+        else {
+          label =
+            group
+        }
+
+
+        if (
+          motion.File &&
+          (
+            group ===
+              'Motion' ||
+            group ===
+              'Motions'
+          )
+        ) {
+          label =
+            fileNameWithoutExtension(
+              motion.File
+            )
+        }
+
+
+        motionActionJobs.push(
+          (
+            async (): Promise<RuntimeMotionActionInfo> => {
+              const analysis =
+                await loadMotionAnalysis(
+                  modelUrl,
+                  motion.File
+                )
+
+
+              /*
+                QUY TẮC CỐ ĐỊNH CỦA APP:
+
+                  *.motion3.json
+                    = ONESHOT
+
+                  *.exp3.json
+                    = TOGGLE
+
+                actionClassifier.ts từ đây chỉ còn dùng để:
+                  - parse curve
+                  - đọc duration
+                  - evaluate motion
+
+                KHÔNG còn dùng persistentScore để quyết định
+                action là oneshot hay toggle.
+              */
+
+              const analyzedMetadata =
+                analysis
+                  ?.metadata ??
+                createFallbackMotionMetadata(
+                  motion.File ??
+                  null
+                )
+
+
+              const metadata:
+                Live2DActionMetadata = {
+                  ...analyzedMetadata,
+
+                  mode:
+                    'oneshot',
+
+                  suggestedMode:
+                    'oneshot',
+
+                  /*
+                    "override" ở đây có nghĩa app rule
+                    override heuristic của classifier.
+                  */
+
+                  modeSource:
+                    'override'
+                }
+
+
+              const action:
+                Live2DMotionAction = {
+                  id:
+                    `motion:${group}:${index}`,
+
+                  type:
+                    'motion',
+
+                  label,
+
+                  group,
+
+                  index,
+
+                  metadata
+                }
+
+
+              console.log(
+                `[Live2D] Motion ONESHOT ${group}[${index}] "${label}"`,
+                {
+                  mode:
+                    metadata.mode,
+
+                  suggestedMode:
+                    metadata.suggestedMode,
+
+                  duration:
+                    metadata.duration,
+
+                  loop:
+                    metadata.loop,
+
+                  persistentScore:
+                    metadata.persistentScore,
+
+                  parameterIds:
+                    metadata.parameterIds,
+
+                  partOpacityIds:
+                    metadata.partOpacityIds,
+
+                  sourceFile:
+                    metadata.sourceFile,
+
+                  multiAction:
+                    analysis
+                      ? supportsMultiAction(
+                          analysis
+                        )
+                      : false
+                }
+              )
+
+
+              return {
+                action,
+
+                analysis
+              }
+            }
+          )()
+        )
+      }
+    )
+  }
+
+
+  const [
+    expressionActions,
+    motionActions
+  ] =
+    await Promise.all([
+      Promise.all(
+        expressionActionJobs
+      ),
+
+      Promise.all(
+        motionActionJobs
       )
-    }
+    ])
+
+
+  actions.push(
+    ...expressionActions.map(
+      item =>
+        item.action
+    ),
+
+    ...motionActions.map(
+      item =>
+        item.action
+    )
   )
 
 
   return {
     actions,
+
+    expressionActions,
+
+    motionActions,
 
     hasIdleMotion,
 
@@ -2035,6 +2721,557 @@ async function initializeMotionOnlyModel():
 
 /*
   ============================================================
+  CUBISM TARGET INDEX
+  ============================================================
+
+  Ta cache index một lần khi load model.
+
+  Không tìm ID lại mỗi frame.
+*/
+
+function clearCubismTargetIndices():
+  void {
+  parameterIndexById.clear()
+  partIndexById.clear()
+}
+
+
+function rebuildCubismTargetIndices(
+  targetModel:
+    Live2DModel
+): void {
+  clearCubismTargetIndices()
+
+
+  const coreModel =
+    targetModel
+      .internalModel
+      .coreModel as unknown as CubismCoreModelAdapter
+
+
+  const rawModel =
+    coreModel.getModel()
+
+
+  for (
+    let index =
+      0;
+
+    index <
+      rawModel
+        .parameters
+        .count;
+
+    index++
+  ) {
+    const id =
+      rawModel
+        .parameters
+        .ids[
+          index
+        ]
+
+
+    if (
+      typeof id ===
+      'string'
+    ) {
+      parameterIndexById.set(
+        id,
+        index
+      )
+    }
+  }
+
+
+  for (
+    let index =
+      0;
+
+    index <
+      rawModel
+        .parts
+        .count;
+
+    index++
+  ) {
+    const id =
+      rawModel
+        .parts
+        .ids[
+          index
+        ]
+
+
+    if (
+      typeof id ===
+      'string'
+    ) {
+      partIndexById.set(
+        id,
+        index
+      )
+    }
+  }
+}
+
+
+/*
+  ============================================================
+  APPLY MULTI ACTION FRAME
+  ============================================================
+
+  pixi-live2d-display phát beforeModelUpdate
+  sau motion / expression / focus / physics / pose.
+
+  Vì vậy chỉ những curve đang active mới
+  override giá trị cuối cùng của parameter.
+
+  Những parameter không thuộc active action
+  vẫn do Idle / focus / physics / pose quản lý.
+*/
+
+function applyMultiActionFrame(
+  targetModel:
+    Live2DModel
+): void {
+  if (
+    model !==
+    targetModel
+  ) {
+    return
+  }
+
+
+  const frame =
+    multiActionController.getFrame()
+
+
+  const expressionFrame =
+    expressionActionController.getFrame()
+
+
+  const hasMotionValues =
+    Object.keys(
+      frame.parameters
+    ).length >
+      0 ||
+    Object.keys(
+      frame.partOpacities
+    ).length >
+      0
+
+
+  const hasExpressionValues =
+    expressionFrame.operations.length >
+      0
+
+
+  if (
+    !hasMotionValues &&
+    !hasExpressionValues
+  ) {
+    return
+  }
+
+
+  const coreModel =
+    targetModel
+      .internalModel
+      .coreModel as unknown as CubismCoreModelAdapter
+
+
+  Object.entries(
+    frame.parameters
+  ).forEach(
+    ([
+      id,
+      value
+    ]) => {
+      const index =
+        parameterIndexById.get(
+          id
+        )
+
+
+      if (
+        index ===
+        undefined
+      ) {
+        return
+      }
+
+
+      coreModel
+        .setParameterValueByIndex(
+          index,
+          value
+        )
+    }
+  )
+
+
+  /*
+    ==========================================================
+    MULTI EXPRESSION
+    ==========================================================
+
+    Apply từng operation đúng thứ tự bật action.
+
+    Ví dụ:
+      Wave L  -> Add ParamArmL
+      Wave R  -> Add ParamArmR
+      Tail Up -> Add ParamTail
+
+    Cả ba cùng tồn tại vì chúng được apply trên cùng
+    native motion baseline trong mỗi frame.
+
+    Nếu hai expression cùng chạm một parameter:
+      action bật sau được apply sau.
+
+    Blend vẫn giữ đúng theo exp3.json:
+      Add / Multiply / Overwrite.
+  */
+
+  expressionFrame
+    .operations
+    .forEach(
+      operation => {
+        const index =
+          parameterIndexById.get(
+            operation.parameterId
+          )
+
+
+        if (
+          index ===
+          undefined
+        ) {
+          return
+        }
+
+
+        if (
+          operation.blend ===
+          'Multiply'
+        ) {
+          if (
+            coreModel.multiplyParameterValueByIndex
+          ) {
+            coreModel.multiplyParameterValueByIndex(
+              index,
+              operation.value
+            )
+          }
+          else {
+            coreModel.setParameterValueByIndex(
+              index,
+              coreModel.getParameterValueByIndex(
+                index
+              ) * operation.value
+            )
+          }
+
+
+          return
+        }
+
+
+        if (
+          operation.blend ===
+          'Overwrite'
+        ) {
+          coreModel.setParameterValueByIndex(
+            index,
+            operation.value
+          )
+
+
+          return
+        }
+
+
+        if (
+          coreModel.addParameterValueByIndex
+        ) {
+          coreModel.addParameterValueByIndex(
+            index,
+            operation.value
+          )
+        }
+        else {
+          coreModel.setParameterValueByIndex(
+            index,
+            coreModel.getParameterValueByIndex(
+              index
+            ) + operation.value
+          )
+        }
+      }
+    )
+
+
+  /*
+    QUAN TRỌNG - giữ nguyên Hiyori/Pose fix:
+
+    Khi model có Pose, code cũ đã đặt:
+
+      config.cubism4.setOpacityFromMotion = false
+
+    để motion không tranh PartOpacity với Pose.
+
+    MultiAction phải tuân thủ cùng nguyên tắc.
+    Vì vậy model có Pose sẽ không bị controller
+    ghi PartOpacity trực tiếp.
+  */
+
+  if (
+    currentModelHasPose
+  ) {
+    return
+  }
+
+
+  Object.entries(
+    frame.partOpacities
+  ).forEach(
+    ([
+      id,
+      value
+    ]) => {
+      const index =
+        partIndexById.get(
+          id
+        )
+
+
+      if (
+        index ===
+        undefined
+      ) {
+        return
+      }
+
+
+      coreModel
+        .setPartOpacityByIndex(
+          index,
+          clamp(
+            value,
+            0,
+            1
+          )
+        )
+    }
+  )
+}
+
+
+/*
+  ============================================================
+  MULTI ACTION MODEL HOOK
+  ============================================================
+*/
+
+function detachMultiActionHook(
+  targetModel:
+    Live2DModel | null
+): void {
+  if (
+    !targetModel ||
+    !beforeModelUpdateHandler
+  ) {
+    beforeModelUpdateHandler =
+      null
+
+
+    return
+  }
+
+
+  try {
+    targetModel
+      .internalModel
+      .off(
+        'beforeModelUpdate',
+        beforeModelUpdateHandler
+      )
+  }
+  catch {
+    /*
+      Model đang destroy thì bỏ qua.
+    */
+  }
+
+
+  beforeModelUpdateHandler =
+    null
+}
+
+
+function attachMultiActionHook(
+  targetModel:
+    Live2DModel
+): void {
+  detachMultiActionHook(
+    targetModel
+  )
+
+
+  const handler =
+    () => {
+      applyMultiActionFrame(
+        targetModel
+      )
+    }
+
+
+  beforeModelUpdateHandler =
+    handler
+
+
+  targetModel
+    .internalModel
+    .on(
+      'beforeModelUpdate',
+      handler
+    )
+}
+
+
+/*
+  ============================================================
+  REGISTER MULTI ACTION EXPRESSIONS
+  ============================================================
+*/
+
+function registerMultiActionExpressions(
+  runtimeInfo:
+    ModelRuntimeInfo
+): void {
+  expressionActionController.clearModel()
+
+
+  runtimeInfo
+    .expressionActions
+    .forEach(
+      item => {
+        if (
+          !item.analysis ||
+          item.analysis.parameters.length ===
+            0
+        ) {
+          return
+        }
+
+
+        expressionActionController
+          .registerExpression(
+            item.action,
+            item.analysis
+          )
+      }
+    )
+}
+
+
+/*
+  ============================================================
+  REGISTER MULTI ACTION MOTIONS
+  ============================================================
+*/
+
+function registerMultiActionMotions(
+  runtimeInfo:
+    ModelRuntimeInfo
+): void {
+  multiActionController.clearModel()
+
+
+  runtimeInfo
+    .motionActions
+    .forEach(
+      item => {
+        if (
+          !item.analysis ||
+          !supportsMultiAction(
+            item.analysis
+          )
+        ) {
+          return
+        }
+
+
+        multiActionController
+          .registerMotion(
+            item.action,
+            item.analysis
+          )
+
+
+        /*
+          Không cho motion3 bị classifier hoặc metadata
+          biến thành toggle.
+
+          File type là source of truth:
+            motion3 = oneshot.
+        */
+
+        multiActionController
+          .setModeOverride(
+            item.action.id,
+            'oneshot'
+          )
+      }
+    )
+}
+
+
+/*
+  ============================================================
+  ACTION STATE API
+  ============================================================
+*/
+
+function getActionState():
+  MultiActionStateSnapshot {
+  return getCombinedActionState()
+}
+
+
+function setActionModeOverride(
+  actionId: string,
+  _mode:
+    Live2DActionMode | null
+): void {
+  /*
+    Action mode không còn do user/classifier chọn.
+
+    Quy tắc cố định:
+
+      motion3 -> oneshot
+      exp3    -> toggle
+
+    API này vẫn được giữ để App.vue cũ không bị vỡ type,
+    nhưng motion luôn bị ép về oneshot.
+  */
+
+  if (
+    actionId.startsWith(
+      'motion:'
+    )
+  ) {
+    multiActionController
+      .setModeOverride(
+        actionId,
+        'oneshot'
+      )
+  }
+}
+
+
+/*
+  ============================================================
   RUN ACTION
   ============================================================
 */
@@ -2046,15 +3283,82 @@ async function runAction(
     model
 
 
-  if (!currentModel) {
+  if (
+    !currentModel
+  ) {
     return
   }
 
+
+  /*
+    ==========================================================
+    MULTI ACTION EXPRESSION
+    ==========================================================
+
+    Đây là nguyên nhân lỗi thật trong video:
+
+    Wave L / Wave R / Tail Up / Hat on...
+    là *.exp3.json, không phải motion3.json.
+
+    ExpressionManager mặc định chỉ chuyển từ expression
+    hiện tại sang expression mới, nên action mới làm mất
+    action trước.
+
+    Quy tắc app:
+      exp3 = toggle vĩnh viễn cho tới khi click lại.
+
+    Nếu expression đã parse được, ta KHÔNG gọi
+    currentModel.expression().
+  */
 
   if (
     action.type ===
     'expression'
   ) {
+    if (
+      expressionActionController.hasAction(
+        action.id
+      )
+    ) {
+      /*
+        Nếu trước đó từng fallback sang native
+        ExpressionManager thì loại bỏ state native
+        để nó không chồng lên custom multi-expression.
+      */
+
+      currentModel
+        .internalModel
+        .motionManager
+        .expressionManager
+        ?.resetExpression()
+
+
+      const active =
+        expressionActionController.trigger(
+          action.id
+        )
+
+
+      console.log(
+        `[MultiExpression] ${action.label}`,
+        {
+          active,
+          activeExpressionIds:
+            expressionActionController
+              .getActiveActionIds()
+        }
+      )
+
+
+      return
+    }
+
+
+    /*
+      File exp3 không đọc được:
+      fallback về behavior cũ.
+    */
+
     try {
       await currentModel.expression(
         action.name
@@ -2071,6 +3375,76 @@ async function runAction(
     return
   }
 
+
+
+  /*
+    ==========================================================
+    MULTI ACTION MOTION
+    ==========================================================
+
+    Nếu motion đã parse được curve:
+      KHÔNG gọi currentModel.motion().
+
+    Controller sẽ tự:
+      - chạy motion đúng 1 lần
+      - tự kết thúc sau Duration
+      - evaluate mỗi frame
+      - merge với action khác
+
+    motion3 KHÔNG BAO GIỜ là toggle.
+  */
+
+  if (
+    multiActionController.hasAction(
+      action.id
+    )
+  ) {
+    const result =
+      multiActionController.trigger(
+        action.id
+      )
+
+
+    if (
+      result
+    ) {
+      console.log(
+        `[MultiAction] ${action.label}`,
+        {
+          mode:
+            result.mode,
+
+          active:
+            result.active,
+
+          activeToggleActionIds:
+            result
+              .state
+              .activeToggleActionIds,
+
+          activeOneshotActionIds:
+            result
+              .state
+              .activeOneshotActionIds
+        }
+      )
+    }
+
+
+    return
+  }
+
+
+  /*
+    ==========================================================
+    NATIVE FALLBACK
+    ==========================================================
+
+    Nếu motion3.json không đọc được,
+    hoặc motion không có Parameter /
+    PartOpacity curve mà controller hỗ trợ,
+    giữ behavior cũ để action vẫn chạy.
+  */
 
   try {
     await currentModel.motion(
@@ -2103,6 +3477,19 @@ async function resetReaction():
   if (!currentModel) {
     return
   }
+
+
+  /*
+    Tắt toàn bộ toggle + oneshot
+    trước khi reset native motion.
+  */
+
+  multiActionController
+    .stopAll()
+
+
+  expressionActionController
+    .stopAll()
 
 
   const motionManager =
@@ -2174,7 +3561,9 @@ async function resetReaction():
 
 defineExpose({
   runAction,
-  resetReaction
+  resetReaction,
+  getActionState,
+  setActionModeOverride
 })
 
 
@@ -2342,6 +3731,18 @@ function fitCurrentModel():
 
 function unloadCurrentModel():
   void {
+  /*
+    Không để action model cũ leak sang
+    model mới.
+  */
+
+  multiActionController
+    .clearModel()
+
+
+  clearCubismTargetIndices()
+
+
   currentModelHasIdle =
     false
 
@@ -2398,13 +3799,30 @@ function unloadCurrentModel():
   )
 
 
+  multiActionController
+    .clearModel()
+
+
+  expressionActionController
+    .clearModel()
+
+
   const currentModel =
     model
 
 
   if (!currentModel) {
+    beforeModelUpdateHandler =
+      null
+
+
     return
   }
+
+
+  detachMultiActionHook(
+    currentModel
+  )
 
 
   model =
@@ -2549,6 +3967,36 @@ async function loadCharacter(
 
     currentInitializationMotion =
       runtimeInfo.initializationMotion
+
+
+    /*
+      Đăng ký parsed expressions + motions
+      cho hai controller độc lập.
+    */
+
+    registerMultiActionExpressions(
+      runtimeInfo
+    )
+
+
+    registerMultiActionMotions(
+      runtimeInfo
+    )
+
+
+    /*
+      Cache Parameter / Part index và gắn hook
+      ngay trước Cubism model.update().
+    */
+
+    rebuildCubismTargetIndices(
+      newModel
+    )
+
+
+    attachMultiActionHook(
+      newModel
+    )
 
 
     newModel.anchor.set(
@@ -2859,6 +4307,20 @@ onBeforeUnmount(
 
 
     unloadCurrentModel()
+
+
+    stopMultiActionStateSubscription()
+
+
+    stopExpressionActionStateSubscription()
+
+
+    multiActionController
+      .destroy()
+
+
+    expressionActionController
+      .destroy()
 
 
     if (

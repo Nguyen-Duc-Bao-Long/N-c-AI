@@ -34,7 +34,12 @@ import type {
 } from './characters/types'
 
 import type {
-  Live2DAction
+  MultiActionStateSnapshot
+} from './features/live2d/multiActionController'
+
+import type {
+  Live2DAction,
+  Live2DActionMode
 } from './features/live2d/types'
 
 
@@ -52,6 +57,15 @@ type Live2DStageHandle = {
 
   resetReaction:
     () => Promise<void>
+
+  getActionState:
+    () => MultiActionStateSnapshot
+
+  setActionModeOverride:
+    (
+      actionId: string,
+      mode: Live2DActionMode | null
+    ) => void
 }
 
 
@@ -590,6 +604,64 @@ const actions =
   )
 
 
+/*
+  ============================================================
+  MULTI ACTION UI STATE
+  ============================================================
+
+  Live2DStage.vue là nơi thật sự chạy action.
+
+  App.vue chỉ giữ một bản state để UI biết:
+
+    - toggle nào đang ON
+    - oneshot nào đang chạy
+
+  Bước tiếp theo ReactionWheel.vue sẽ dùng
+  hai state này để highlight icon.
+*/
+
+const activeToggleActionIds =
+  ref<string[]>(
+    []
+  )
+
+
+const activeOneshotActionIds =
+  ref<string[]>(
+    []
+  )
+
+
+function clearActionUiState():
+  void {
+  activeToggleActionIds.value =
+    []
+
+
+  activeOneshotActionIds.value =
+    []
+}
+
+
+function handleActionStateChange(
+  state: MultiActionStateSnapshot
+): void {
+  /*
+    Copy array thay vì giữ reference
+    của controller.
+  */
+
+  activeToggleActionIds.value = [
+    ...state.activeToggleActionIds
+  ]
+
+
+  activeOneshotActionIds.value = [
+    ...state.activeOneshotActionIds
+  ]
+}
+
+
 const modelBounds =
   ref<ModelBounds | null>(
     null
@@ -601,6 +673,23 @@ function handleActionsReady(
 ): void {
   actions.value =
     newActions
+
+
+  /*
+    Khi model unload/load lại,
+    Live2DStage sẽ emit state mới.
+
+    Clear ở đây thêm một lớp bảo vệ
+    để UI không giữ highlight của
+    action thuộc model cũ.
+  */
+
+  if (
+    newActions.length ===
+    0
+  ) {
+    clearActionUiState()
+  }
 }
 
 
@@ -900,14 +989,53 @@ function closeReactionWheel():
 async function selectAction(
   action: Live2DAction
 ): Promise<void> {
-  await live2dStage
-    .value
-    ?.runAction(
-      action
-    )
+  const stage =
+    live2dStage.value
 
 
-  closeReactionWheel()
+  if (!stage) {
+    return
+  }
+
+
+  await stage.runAction(
+    action
+  )
+
+
+  /*
+    QUAN TRỌNG:
+
+    KHÔNG đóng Reaction Wheel sau mỗi click nữa.
+
+    Nhờ vậy user có thể:
+
+      Hat ON
+      Tail ON
+      Arm ON
+      Wave
+      Blink
+
+    liên tục trong cùng một lần mở menu.
+
+    Toggle đang ON muốn tắt:
+      click lại chính icon đó.
+  */
+
+
+  /*
+    Live2DStage đã emit actionStateChange,
+    nhưng đọc lại state ở đây giúp UI đồng bộ
+    ngay cả khi event bị trễ một frame.
+  */
+
+  const state =
+    stage.getActionState()
+
+
+  handleActionStateChange(
+    state
+  )
 }
 
 
@@ -955,6 +1083,9 @@ function selectModel(
 
   actions.value =
     []
+
+
+  clearActionUiState()
 
 
   modelPickerOpen.value =
@@ -1288,6 +1419,9 @@ async function deleteModel(
 
       actions.value =
         []
+
+
+      clearActionUiState()
 
 
       currentCharacterId.value =
@@ -2208,6 +2342,7 @@ onBeforeUnmount(
         :stage-offset="stageOffset"
         @hover-change="handleModelHover"
         @actions-ready="handleActionsReady"
+        @action-state-change="handleActionStateChange"
         @model-bounds-change="handleModelBounds"
       />
 
@@ -2343,13 +2478,36 @@ onBeforeUnmount(
       <div
         v-if="reactionWheelOpen"
         class="reaction-wheel-container"
+        :data-active-toggle-count="
+          activeToggleActionIds.length
+        "
+        :data-active-oneshot-count="
+          activeOneshotActionIds.length
+        "
       >
 
         <ReactionWheel
           :actions="actions"
+          :active-toggle-action-ids="
+            activeToggleActionIds
+          "
+          :active-oneshot-action-ids="
+            activeOneshotActionIds
+          "
           @select="selectAction"
           @close="closeReactionWheel"
         />
+
+
+        <!--
+          activeToggleActionIds và activeOneshotActionIds
+          đã được App.vue theo dõi.
+
+          Bước tiếp theo sẽ sửa ReactionWheel.vue để:
+          - nhận 2 state này qua props
+          - highlight toggle đang ON
+          - hiển thị oneshot đang chạy
+        -->
 
       </div>
 
