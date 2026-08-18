@@ -1,0 +1,54 @@
+# ============================================================
+# F.A.T - RESOURCE SCHEMA
+# ============================================================
+#
+# Định nghĩa quy tắc logic chung mà mọi Resource của F.A.T
+# phải tuân theo.
+#
+# Đây KHÔNG phải manifest user phải viết.
+# Đây là luật do F.A.T quản lý.
+# ============================================================
+
+schema_version: 1
+
+
+resource_types:
+
+  - character
+
+  - visual
+
+  - brain
+
+  - stt
+
+  - tts
+
+
+origins:
+
+  - builtin
+
+  - user
+
+
+id:
+
+  required: true
+
+  unique_per_type: true
+
+  lowercase: true
+
+
+common_fields:
+
+  required:
+
+    - id
+
+    - type
+
+    - name
+
+    - origin

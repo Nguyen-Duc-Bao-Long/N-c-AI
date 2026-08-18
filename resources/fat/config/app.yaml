@@ -1,0 +1,89 @@
+# ============================================================
+# F.A.T - APPLICATION CONFIG
+# ============================================================
+#
+# Đây là cấu hình SYSTEM đi cùng bản cài F.A.T.
+#
+# File này KHÔNG phải user settings.
+#
+# User settings sau này nằm trong:
+#
+#   app.getPath("userData")
+#
+# Built-in resources được định nghĩa ở đây
+# không được user import ghi đè.
+# ============================================================
+
+schema_version: 1
+
+
+# ============================================================
+# APPLICATION
+# ============================================================
+
+app:
+
+  id: "fat"
+
+  name: "F.A.T"
+
+
+# ============================================================
+# BUILT-IN DEFAULTS
+# ============================================================
+#
+# Đây là các resource mặc định do F.A.T cung cấp.
+#
+# Nếu resource do user chọn:
+# - bị xóa
+# - bị lỗi
+# - không còn tồn tại
+#
+# app sẽ fallback về các resource này.
+# ============================================================
+
+defaults:
+
+  character:
+    "shu"
+
+  visual:
+    "shu-live2d-default"
+
+  brain:
+    "shu-brain-default"
+
+  stt:
+    "fat-stt-default"
+
+  tts:
+    "shu-tts-default"
+
+
+# ============================================================
+# SYSTEM RESOURCE POLICY
+# ============================================================
+
+resource_policy:
+
+  builtin_resources_locked:
+    true
+
+  allow_delete_builtin:
+    false
+
+  allow_overwrite_builtin:
+    false
+
+  allow_user_resource_id_collision:
+    false
+
+
+# ============================================================
+# PROJECT DATA
+# ============================================================
+
+project:
+
+  credits:
+    "../credits.yaml"

@@ -19,6 +19,33 @@ import {
 } from './settings'
 
 import {
+  ensureUserResourceDirectories
+} from './resources/paths'
+
+import {
+  loadSystemConfig
+} from './resources/systemResourceLoader'
+
+import {
+  ResourceRegistry
+} from './resources/resourceRegistry'
+
+import {
+  loadSystemResourceCatalog
+} from './resources/systemResourceCatalogLoader'
+
+import type {
+  LoadedSystemResourceCatalog,
+  LoadedSystemCatalogResource
+} from './resources/systemResourceCatalogLoader'
+
+import type {
+  LoadedSystemConfig,
+  ResourceKind,
+  UserResourcePaths
+} from './resources/types'
+
+import {
   cp,
   mkdir,
   readFile,
@@ -53,19 +80,552 @@ import {
 
 /*
   ============================================================
+  F.A.T RESOURCE SYSTEM
+  ============================================================
+
+  CENTRAL CATALOG ARCHITECTURE
+
+  Startup:
+
+    1. Load + validate app.yaml
+    2. Resolve credits.yaml
+    3. Create User Library directories
+    4. Load resources/fat/catalog/builtin-resources.yaml
+    5. Validate Central Catalog
+    6. Register BUILT-IN resources into ResourceRegistry
+    7. Check configured default resources
+
+  QUAN TRỌNG:
+
+    Không còn scan:
+      manifest.yaml bên trong từng resource folder
+
+    Không còn yêu cầu user/model author phải tạo manifest.
+
+    Built-in metadata:
+      resources/fat/catalog/builtin-resources.yaml
+
+    User metadata sau này:
+      userData/fat-data/catalog/resources.json
+
+    và file User Catalog sẽ do F.A.T tự tạo/quản lý.
+
+  BOOTSTRAP MODE:
+
+    Ở giai đoạn hiện tại catalog có thể là:
+
+      resources: []
+
+    nên các default:
+      character:shu
+      visual:shu-live2d-default
+      brain:shu-brain-default
+      stt:fat-stt-default
+      tts:shu-tts-default
+
+    có thể chưa tồn tại thật.
+
+    Thiếu default -> WARNING
+    Catalog/config sai -> ERROR
+*/
+
+
+type FatResourceRuntimeState = {
+  system:
+    LoadedSystemConfig
+
+  user:
+    UserResourcePaths
+
+  registry:
+    ResourceRegistry
+
+  systemCatalog:
+    LoadedSystemResourceCatalog
+
+  missingDefaultResources:
+    string[]
+}
+
+
+let fatResourceRuntime:
+  FatResourceRuntimeState | null =
+    null
+
+
+/*
+  ============================================================
+  DEFAULT RESOURCE DESCRIPTORS
+  ============================================================
+
+  app.yaml là source of truth.
+*/
+
+
+function getDefaultResourceDescriptors(
+  system:
+    LoadedSystemConfig
+): Array<{
+  kind:
+    ResourceKind
+
+  id:
+    string
+}> {
+  return [
+    {
+      kind:
+        'character',
+
+      id:
+        system.config.defaults.character
+    },
+
+    {
+      kind:
+        'visual',
+
+      id:
+        system.config.defaults.visual
+    },
+
+    {
+      kind:
+        'brain',
+
+      id:
+        system.config.defaults.brain
+    },
+
+    {
+      kind:
+        'stt',
+
+      id:
+        system.config.defaults.stt
+    },
+
+    {
+      kind:
+        'tts',
+
+      id:
+        system.config.defaults.tts
+    }
+  ]
+}
+
+
+/*
+  ============================================================
+  REGISTER BUILT-IN CATALOG RESOURCES
+  ============================================================
+
+  Central Catalog Loader:
+    - đọc YAML
+    - validate
+    - resolve source path
+
+  ResourceRegistry:
+    - duplicate protection
+    - reserved ID protection
+    - built-in protection
+*/
+
+
+function registerSystemCatalogResources(
+  registry:
+    ResourceRegistry,
+
+  resources:
+    LoadedSystemCatalogResource[]
+): void {
+  resources.forEach(
+    loaded => {
+      const result =
+        registry.register(
+          loaded.record
+        )
+
+
+      if (
+        !result.ok
+      ) {
+        throw new Error(
+          [
+            '[F.A.T] Failed to register built-in catalog resource.',
+            `Kind: ${loaded.record.kind}`,
+            `ID: ${loaded.record.id}`,
+            `Catalog: ${loaded.catalogResource.type}:${loaded.catalogResource.id}`,
+            `Reason: ${result.reason ?? 'Unknown registry error'}`
+          ].join(
+            '\n'
+          )
+        )
+      }
+    }
+  )
+}
+
+
+/*
+  ============================================================
+  FIND MISSING DEFAULT RESOURCES
+  ============================================================
+
+  Hiện vẫn là BOOTSTRAP MODE.
+
+  Sau khi toàn bộ default resource thật đã được cài:
+    Shu Character
+    Shu Visual
+    Brain
+    STT
+    TTS
+
+  ta sẽ chuyển check này thành strict startup validation.
+*/
+
+
+function findMissingDefaultResources(
+  system:
+    LoadedSystemConfig,
+
+  registry:
+    ResourceRegistry
+): string[] {
+  return getDefaultResourceDescriptors(
+    system
+  )
+    .filter(
+      item =>
+        !registry.has(
+          item.kind,
+          item.id
+        )
+    )
+    .map(
+      item =>
+        `${item.kind}:${item.id}`
+    )
+}
+
+
+/*
+  ============================================================
+  INITIALIZE F.A.T RESOURCE SYSTEM
+  ============================================================
+*/
+
+
+function initializeFatResourceSystem():
+  FatResourceRuntimeState {
+  /*
+    ----------------------------------------------------------
+    1. SYSTEM CONFIG
+    ----------------------------------------------------------
+  */
+
+  const system =
+    loadSystemConfig()
+
+
+  /*
+    ----------------------------------------------------------
+    2. USER DIRECTORIES
+    ----------------------------------------------------------
+
+    User Catalog directory cũng được tạo ở đây:
+
+      fat-data/catalog/
+
+    resources.json sẽ do User Catalog layer tạo sau.
+  */
+
+  const user =
+    ensureUserResourceDirectories()
+
+
+  /*
+    ----------------------------------------------------------
+    3. RESOURCE REGISTRY
+    ----------------------------------------------------------
+  */
+
+  const registry =
+    new ResourceRegistry(
+      system.config
+    )
+
+
+  /*
+    ----------------------------------------------------------
+    4. CENTRAL BUILT-IN CATALOG
+    ----------------------------------------------------------
+
+    Không scan folder / manifest.yaml nữa.
+  */
+
+  const systemCatalog =
+    loadSystemResourceCatalog(
+      system
+    )
+
+
+  /*
+    ----------------------------------------------------------
+    5. REGISTER BUILT-IN RESOURCES
+    ----------------------------------------------------------
+  */
+
+  registerSystemCatalogResources(
+    registry,
+    systemCatalog.resources
+  )
+
+
+  /*
+    ----------------------------------------------------------
+    6. BOOTSTRAP DEFAULT CHECK
+    ----------------------------------------------------------
+  */
+
+  const missingDefaultResources =
+    findMissingDefaultResources(
+      system,
+      registry
+    )
+
+
+  const runtime:
+    FatResourceRuntimeState = {
+      system,
+      user,
+      registry,
+      systemCatalog,
+      missingDefaultResources
+    }
+
+
+  fatResourceRuntime =
+    runtime
+
+
+  /*
+    ----------------------------------------------------------
+    LOG
+    ----------------------------------------------------------
+  */
+
+  console.log('')
+
+
+  console.log(
+    '============================================================'
+  )
+
+
+  console.log(
+    '[F.A.T] RESOURCE SYSTEM READY'
+  )
+
+
+  console.log(
+    '[F.A.T] Architecture: CENTRAL CATALOG'
+  )
+
+
+  console.log(
+    '[F.A.T] App:',
+    system.config.app.name
+  )
+
+
+  console.log(
+    '[F.A.T] System root:',
+    system.paths.root
+  )
+
+
+  console.log(
+    '[F.A.T] App config:',
+    system.paths.appConfigFile
+  )
+
+
+  console.log(
+    '[F.A.T] Credits:',
+    system.creditsFile
+  )
+
+
+  console.log(
+    '[F.A.T] Resource schema:',
+    systemCatalog.schemaFile
+  )
+
+
+  console.log(
+    '[F.A.T] Built-in catalog:',
+    systemCatalog.catalogFile
+  )
+
+
+  console.log(
+    '[F.A.T] User data root:',
+    user.root
+  )
+
+
+  console.log(
+    '[F.A.T] User catalog:',
+    user.resourcesCatalogFile
+  )
+
+
+  console.log(
+    '[F.A.T] User library:',
+    user.libraryDir
+  )
+
+
+  console.log(
+    '[F.A.T] Built-in catalog resources:',
+    systemCatalog.resources.length
+  )
+
+
+  console.log(
+    '[F.A.T] Registry resources:',
+    registry.size
+  )
+
+
+  console.log(
+    '[F.A.T] Character resources:',
+    registry.list(
+      'character'
+    ).length
+  )
+
+
+  console.log(
+    '[F.A.T] Visual resources:',
+    registry.list(
+      'visual'
+    ).length
+  )
+
+
+  console.log(
+    '[F.A.T] Brain resources:',
+    registry.list(
+      'brain'
+    ).length
+  )
+
+
+  console.log(
+    '[F.A.T] STT resources:',
+    registry.list(
+      'stt'
+    ).length
+  )
+
+
+  console.log(
+    '[F.A.T] TTS resources:',
+    registry.list(
+      'tts'
+    ).length
+  )
+
+
+  if (
+    missingDefaultResources.length >
+      0
+  ) {
+    console.warn(
+      '[F.A.T] BOOTSTRAP MODE - default resources not installed yet:'
+    )
+
+
+    missingDefaultResources.forEach(
+      resourceKey => {
+        console.warn(
+          `[F.A.T]   - ${resourceKey}`
+        )
+      }
+    )
+  }
+  else {
+    console.log(
+      '[F.A.T] All configured default resources are registered.'
+    )
+  }
+
+
+  console.log(
+    '============================================================'
+  )
+
+
+  console.log('')
+
+
+  return runtime
+}
+
+
+/*
+  ============================================================
+  GET F.A.T RESOURCE RUNTIME
+  ============================================================
+
+  Các phase sau sẽ dùng runtime này cho:
+
+    - User Catalog
+    - Import Manager
+    - Character Resolver
+    - Visual Resolver
+    - Brain / STT / TTS Providers
+    - Control Center IPC
+*/
+
+
+function getFatResourceRuntime():
+  FatResourceRuntimeState {
+  if (
+    !fatResourceRuntime
+  ) {
+    throw new Error(
+      '[F.A.T] Resource System has not been initialized.'
+    )
+  }
+
+
+  return fatResourceRuntime
+}
+
+
+/*
+  ============================================================
   MAIN WINDOW / SYSTEM TRAY
   ============================================================
 
-  BrowserWindow vẫn skipTaskbar = true
-  vì đây là desktop companion full-screen transparent.
+  Bước 8.5:
 
-  User sẽ quản lý app bằng System Tray:
-  - Show Character
-  - Hide Character
-  - Exit
+  - Tên hiển thị của app: F.A.T
+  - BrowserWindow xuất hiện trên Windows Taskbar
+  - Window / Taskbar / Tray dùng cùng một master icon:
+      resources/icon.png
 
-  Tray icon bên dưới được nhúng trực tiếp vào code để bản Beta
-  vẫn luôn có icon kể cả khi chưa có build/icon.ico riêng.
+  DEV:
+    <project>/resources/icon.png
+
+  PACKAGED:
+    <process.resourcesPath>/icon.png
+
+  electron-builder.yml phải copy icon bằng extraResources.
 */
 
 let mainWindow:
@@ -78,8 +638,30 @@ let tray:
     null
 
 
-const TRAY_ICON_DATA_URL =
-  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAA0klEQVR4nO2Xyw2EMAxEAdEONLGUBScoC5rYLWg5ESFC7Jl8iBD4hBTH8+zYUSiKp1upOfSf7z9EYFpaUcO5GCqMglRXiEsxLYAU4lLsSnNIDVGHBBvnxnwP3c8rhmkMJvu98NFQkK0pT5vwSqMBpOyR9WCA2HY/AK3J2GnIXgGve2DLMsY9QAO4utwXhjoCdMSYUYQB2PlG/SEAVpzZl30KXgAIwHfGkX0GQHu9shCS/16LOgIUgoG1sk79LjxW2qqAdhQxxU8BUkG4Ymb/NXttBelbUzpnNfUCAAAAAElFTkSuQmCC'
+/*
+  ============================================================
+  APP ICON PATH
+  ============================================================
+*/
+
+function getAppIconPath():
+  string {
+  if (
+    app.isPackaged
+  ) {
+    return join(
+      process.resourcesPath,
+      'icon.png'
+    )
+  }
+
+
+  return join(
+    app.getAppPath(),
+    'resources',
+    'icon.png'
+  )
+}
 
 
 type ImportedModelInfo = {
@@ -2231,24 +2813,41 @@ function registerIpcHandlers():
 */
 
 function createTrayIcon() {
+  const iconPath =
+    getAppIconPath()
+
+
   const icon =
     nativeImage
-      .createFromDataURL(
-        TRAY_ICON_DATA_URL
+      .createFromPath(
+        iconPath
       )
+
+
+  if (
+    icon.isEmpty()
+  ) {
+    console.warn(
+      '[F.A.T] Tray icon could not be loaded:',
+      iconPath
+    )
+  }
 
 
   /*
     Windows tray thường hiển thị tốt
     với icon 16x16 hoặc 32x32.
+
+    Dùng 32x32 để giữ chi tiết tốt hơn,
+    Windows sẽ tự scale khi cần.
   */
 
   return icon.resize({
     width:
-      16,
+      32,
 
     height:
-      16
+      32
   })
 }
 
@@ -2329,7 +2928,7 @@ function createTray():
 
 
   tray.setToolTip(
-    `AI Desktop Character ${app.getVersion()}`
+    `F.A.T ${app.getVersion()}`
   )
 
 
@@ -2337,7 +2936,7 @@ function createTray():
     Menu.buildFromTemplate([
       {
         label:
-          `AI Desktop Character ${app.getVersion()}`,
+          `F.A.T ${app.getVersion()}`,
 
         enabled:
           false
@@ -2494,11 +3093,24 @@ function createWindow():
 
 
       /*
-        Không hiện host full-screen
-        trên taskbar.
+        Bước 8.5:
+        hiện F.A.T trên Windows Taskbar.
       */
       skipTaskbar:
-        true,
+        false,
+
+
+      /*
+        Tên + icon của BrowserWindow.
+
+        page-title-updated bên dưới sẽ khóa
+        title ở F.A.T để renderer không ghi đè.
+      */
+      title:
+        'F.A.T',
+
+      icon:
+        getAppIconPath(),
 
 
       autoHideMenuBar:
@@ -2547,6 +3159,30 @@ function createWindow():
         mainWindow =
           null
       }
+    }
+  )
+
+
+  /*
+    Giữ tên Taskbar / Window luôn là F.A.T.
+
+    Renderer HTML có thể phát event đổi page title.
+    Chặn event đó để title không quay lại
+    tên template cũ.
+  */
+
+  window.on(
+    'page-title-updated',
+
+    (
+      event
+    ) => {
+      event.preventDefault()
+
+
+      window.setTitle(
+        'F.A.T'
+      )
     }
   )
 
@@ -2659,12 +3295,99 @@ app
 
       electronApp
         .setAppUserModelId(
-          'com.electron'
+          'com.doanh.aidesktopcharacter'
         )
 
 
       /*
-        Model Library.
+        ======================================================
+        F.A.T RESOURCE SYSTEM
+        ======================================================
+
+        Phải khởi tạo trước:
+          - Model Library cũ
+          - custom protocol
+          - IPC
+          - BrowserWindow
+
+        để mọi module về sau có thể tin rằng:
+          app.yaml đã hợp lệ
+          credits.yaml tồn tại
+          user library đã sẵn sàng
+          built-in Central Catalog đã được load
+          ResourceRegistry đã được khởi tạo.
+      */
+
+      try {
+        initializeFatResourceSystem()
+
+
+        /*
+          Touch runtime một lần để TypeScript
+          và startup flow xác nhận state đã tồn tại.
+
+          Central Catalog đã tạo Registry trong runtime.
+          Các bước sau sẽ load USER catalog và expose IPC.
+        */
+
+        getFatResourceRuntime()
+      }
+      catch (error) {
+        console.error(
+          '[F.A.T] Resource System initialization failed:',
+          error
+        )
+
+
+        const message =
+          error instanceof
+            Error
+            ? error.message
+            : String(
+                error
+              )
+
+
+        dialog.showErrorBox(
+          'F.A.T Resource System Error',
+
+          [
+            'F.A.T cannot start because its built-in resource system is invalid.',
+            '',
+            message,
+            '',
+            'Check:',
+            'resources/fat/config/app.yaml',
+            'resources/fat/credits.yaml',
+            'resources/fat/catalog/builtin-resources.yaml',
+            'resources/fat/schemas/resource.schema.yaml'
+          ].join(
+            '\n'
+          )
+        )
+
+
+        app.quit()
+
+
+        return
+      }
+
+
+      /*
+        ======================================================
+        LEGACY MODEL LIBRARY
+        ======================================================
+
+        GIỮ NGUYÊN trong Bước 3.
+
+        Đây vẫn là:
+          userData/model-library/
+
+        Chúng ta sẽ migrate sang:
+          userData/fat-data/library/visual/live2d/
+
+        ở bước riêng sau khi Resource Registry đã hoàn chỉnh.
       */
 
       await ensureModelLibrary()
@@ -2720,12 +3443,14 @@ app
       /*
         System Tray.
 
-        Vì BrowserWindow dùng
-        skipTaskbar = true,
-        Tray là nơi user quản lý:
-        - Show
-        - Hide
+        BrowserWindow hiện trên Taskbar,
+        đồng thời Tray vẫn cung cấp:
+        - Show Character
+        - Hide Character
         - Exit
+
+        Cả Window và Tray đều dùng
+        resources/icon.png.
       */
 
       createTray()
@@ -2775,6 +3500,17 @@ app.on(
       tray =
         null
     }
+
+
+    /*
+      Runtime chỉ chứa config + paths,
+      không có handle cần dispose.
+
+      Reset reference để lifecycle rõ ràng.
+    */
+
+    fatResourceRuntime =
+      null
   }
 )
 

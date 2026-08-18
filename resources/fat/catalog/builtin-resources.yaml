@@ -1,0 +1,24 @@
+# ============================================================
+# F.A.T - BUILT-IN RESOURCE CATALOG
+# ============================================================
+#
+# Đây là catalog trung tâm của toàn bộ tài nguyên BUILT-IN
+# được phát hành cùng F.A.T.
+#
+# User KHÔNG cần tự tạo file này.
+#
+# Các model import từ bên ngoài:
+# - Live2D
+# - Brain
+# - STT
+# - TTS
+#
+# sẽ được F.A.T tự nhận diện và tự tạo metadata riêng
+# trong User Library.
+#
+# ============================================================
+
+schema_version: 1
+
+
+resources: []

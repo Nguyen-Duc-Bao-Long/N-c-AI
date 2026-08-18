@@ -1,0 +1,276 @@
+# ============================================================
+# F.A.T - PROJECT CREDITS
+# ============================================================
+#
+# File ghi công toàn bộ những người tham gia phát triển F.A.T
+# và các tài nguyên mặc định được phân phối cùng ứng dụng.
+#
+# Bao gồm:
+# - nhóm phát triển
+# - thành viên trong nhóm
+# - vai trò từng người
+# - AI / Brain / STT / TTS
+# - App / Frontend / UI / UX
+# - Character / Artist / Live2D
+# - Personality / Lore / Narrative
+#
+# Credits KHÔNG tự động trở thành lore.
+# Chỉ những thông tin được lore.yaml xác nhận mới là canon.
+# ============================================================
+
+schema_version: 1
+
+
+# ============================================================
+# 1. PROJECT
+# ============================================================
+
+project:
+
+  name: "F.A.T"
+
+  type: "Modular AI Desktop Character Platform"
+
+  default_character: "Shu"
+
+  team_name: "GF Team"
+
+  description: >
+    F.A.T là một nền tảng AI desktop dạng module,
+    cho phép người dùng xây dựng và vận hành các nhân vật AI
+    có khả năng tương tác bằng giọng nói và hình ảnh.
+
+    F.A.T hỗ trợ thay thế hoặc import nhiều thành phần độc lập,
+    bao gồm character model, Live2D/2D model, STT, Brain,
+    LLM, TTS và các dịch vụ AI bên ngoài.
+
+    Các thành phần có thể sử dụng model cục bộ
+    hoặc thông qua API của nhà cung cấp bên thứ ba.
+
+    Shu là nhân vật và bộ cấu hình mặc định được cung cấp
+    cùng F.A.T, nhưng F.A.T không bị giới hạn chỉ cho Shu.
+
+  credits_policy: >
+    File này lưu thông tin ghi công cho toàn bộ cá nhân
+    và nhóm tham gia phát triển dự án F.A.T.
+
+    Chỉ ghi những vai trò và đóng góp đã được xác nhận.
+
+    Không tự suy diễn tên thật, quyền sở hữu,
+    danh tính hoặc vai trò khác ngoài thông tin đã ghi.
+
+    Thông tin trong credits.yaml không tự động trở thành
+    một phần của cốt truyện nhân vật.
+
+    Chỉ những thông tin được lore.yaml xác nhận
+    mới được coi là canon của nhân vật.
+
+
+# ============================================================
+# 2. CORE TEAM
+# ============================================================
+
+core_team:
+
+  team_name: "GF Team"
+
+  members:
+
+    # --------------------------------------------------------
+    # ĐÀO ĐỨC DOANH
+    # --------------------------------------------------------
+
+    - id: "@_eunyul04"
+
+      name: "Đào Đức Doanh"
+
+      nickname: "DDD"
+
+      role:
+        - "Project Leader"
+        - "AI Developer"
+        - "AI Systems Architect"
+        - "LLM Fine-tuning Engineer"
+        - "Speech Model Engineer"
+
+      contribution:
+        - "Định hướng và quản lý quá trình phát triển dự án F.A.T"
+        - "Thiết kế kiến trúc tổng thể của hệ thống AI"
+        - "Xây dựng kiến trúc Brain và luồng xử lý giữa các module"
+        - "Phát triển và tích hợp các thành phần AI của Brain"
+        - "Huấn luyện và tinh chỉnh các mô hình STT và TTS"
+        - "Nghiên cứu và thử nghiệm các mô hình LLM cho F.A.T"
+        - "Huấn luyện LoRA/QLoRA cho tính cách và hành vi của Shu"
+        - "Thiết kế cách kết nối LLM, Memory, Emotion, Relationship, Knowledge và Tool System"
+        - "Tích hợp STT, Brain và TTS thành pipeline hội thoại hoàn chỉnh"
+        - "Đánh giá chất lượng mô hình và điều chỉnh hệ thống qua các phiên bản"
+
+      contact:
+
+        - platform: "Discord"
+          handle: "@_eunyul04"
+          url: ""
+
+        - platform: "Facebook"
+          handle: "Đào Đức Doanh"
+          url: "https://www.facebook.com/ducdoanh4"
+
+      notes: >
+        Phụ trách định hướng kỹ thuật chính của dự án,
+        đặc biệt là AI, Brain, LLM và các mô hình giọng nói.
+
+
+    # --------------------------------------------------------
+    # VƯƠNG BẢO MINH
+    # --------------------------------------------------------
+
+    - id: "@langshu"
+
+      name: "Vương Bảo Minh"
+
+      nickname: "vbm"
+
+      role:
+        - "Creative Director"
+        - "Character Artist"
+        - "Live2D Rigger"
+        - "UI/UX Designer"
+        - "Visual Interface Designer"
+        - "Character Designer"
+        - "Character Narrative Designer"
+
+      contribution:
+        - "Thiết kế và hoàn thiện hình ảnh nhân vật Shu"
+        - "Phát triển phong cách hình ảnh và nhận diện trực quan của Shu"
+        - "Giúp Shu có được nhân dạng hiện tại"
+        - "Rig và thiết lập chuyển động cho model Live2D của Shu"
+        - "Thiết kế biểu cảm, trạng thái và chuyển động trực quan của nhân vật"
+        - "Thiết kế bố cục và trải nghiệm UI/UX cho F.A.T"
+        - "Thiết kế icon, nút bấm, shortcut và các thành phần giao diện"
+        - "Xây dựng phong cách visual và tính nhất quán của giao diện F.A.T"
+        - "Thiết kế tính cách, đặc điểm hành vi và cách thể hiện cá tính của Shu"
+        - "Phát triển cốt truyện, nguồn gốc và lore của Shu"
+        - "Xây dựng các mốc sự kiện và định hướng phát triển câu chuyện của Shu"
+        - "Đảm bảo hình ảnh, tính cách, cốt truyện và giao diện phù hợp với định hướng sáng tạo chung của dự án"
+
+      contact:
+
+        - platform: "Discord"
+          handle: "@langshu"
+          url: ""
+
+        - platform: "Facebook"
+          handle: "Vương Bảo Minh"
+          url: "https://www.facebook.com/vuongbaominh.2095"
+
+        - platform: "X"
+          handle: "@langshu2095"
+          url: "https://twitter.com/langshu2095"
+
+      notes: >
+        Phụ trách định hướng sáng tạo của Shu và F.A.T,
+        bao gồm character design, visual, Live2D,
+        UI/UX, personality và lore của Shu.
+
+
+    # --------------------------------------------------------
+    # NGUYỄN ĐỨC BẢO LONG
+    # --------------------------------------------------------
+
+    - id: "@akilysa06"
+
+      name: "Nguyễn Đức Bảo Long"
+
+      nickname: "Akilysa"
+
+      role:
+        - "Frontend Developer"
+        - "Application UI Developer"
+        - "UI Architecture Developer"
+
+      contribution:
+        - "Xây dựng và triển khai giao diện F.A.T"
+        - "Thiết kế kiến trúc code cho hệ thống UI"
+        - "Chuyển thiết kế UI/UX thành giao diện hoạt động thực tế"
+        - "Phát triển component, navigation và logic tương tác của giao diện"
+        - "Tích hợp giao diện với các module backend và AI"
+        - "Tối ưu hiệu năng và khả năng bảo trì của phần giao diện"
+
+      contact:
+
+        - platform: "Discord"
+          handle: "@akilysa06"
+          url: ""
+
+        - platform: "Facebook"
+          handle: "Nguyễn Đức Bảo Long"
+          url: "https://www.facebook.com/lonknguyendangbuon"
+
+      notes: >
+        Phụ trách triển khai kỹ thuật và kiến trúc giao diện
+        của ứng dụng F.A.T.
+
+
+# ============================================================
+# 3. SPECIAL THANKS
+# ============================================================
+
+special_thanks:
+
+  message: >
+    GF Team xin gửi lời cảm ơn chân thành tới tất cả những người
+    đã dành thời gian hỗ trợ thu thập dữ liệu, tham gia thử nghiệm F.A.T,
+    phát hiện lỗi, đóng góp phản hồi và chia sẻ những ý tưởng
+    trong suốt quá trình phát triển.
+
+    Sự hỗ trợ của mọi người là một phần quan trọng giúp nhóm
+    có thể tiếp tục cải thiện, phát triển và hoàn thiện F.A.T. ❤︎
+
+
+# ============================================================
+# 4. CREDIT DISPLAY RULES
+# ============================================================
+
+display_rules:
+
+  normal_roleplay: >
+    Character đang hoạt động không tự động kể tên team phát triển,
+    developer hoặc contributor trong hội thoại thông thường.
+
+  project_credit_question: >
+    Nếu người dùng hỏi ai phát triển F.A.T,
+    sử dụng credits.yaml làm nguồn thông tin chính.
+
+  character_credit_question: >
+    Nếu người dùng hỏi ai thiết kế, vẽ, rig,
+    xây dựng tính cách hoặc cốt truyện của Shu,
+    sử dụng credits.yaml làm nguồn thông tin chính.
+
+  character_origin_question: >
+    Nếu người dùng hỏi về một sự kiện thuộc cốt truyện của Shu,
+    ưu tiên lore.yaml.
+
+  contributor_question: >
+    Nếu người dùng hỏi ai thiết kế, phát triển hoặc đóng góp
+    một phần cụ thể của F.A.T hoặc Shu,
+    sử dụng thông tin contribution và role trong credits.yaml.
+
+  do_not_invent:
+
+    - "Không tự bịa thành viên nhóm."
+
+    - "Không tự bịa vai trò."
+
+    - "Không tự bịa tên thật."
+
+    - "Không tự bịa tài khoản mạng xã hội."
+
+    - "Không tự bịa quyền sở hữu."
+
+    - "Không biến thành viên development team thành nhân vật trong lore."
+
+    - "Không coi mọi contributor là người tạo ra Shu."
+
+    - "Không coi người phát triển F.A.T là tác giả của model do người dùng import."
+
+    - "Không coi tài nguyên được import vào F.A.T là tài sản của GF Team."

@@ -1,9 +1,11 @@
 appId: com.doanh.aidesktopcharacter
 
-productName: AI Desktop Character
+productName: F.A.T
+
 
 directories:
   buildResources: build
+
 
 files:
   - '!**/.vscode/*'
@@ -13,20 +15,47 @@ files:
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
 
-asarUnpack:
-  - resources/**
+  # F.A.T system resources are copied with extraResources below.
+  # Do not package another copy inside app.asar.
+  - '!resources/fat/**'
+  - '!resources/icon.png'
+
+
+extraResources:
+  # Built-in F.A.T Resource System.
+  #
+  # Packaged location:
+  #   process.resourcesPath/fat
+  #
+  # This matches:
+  #   getSystemResourceRoot()
+  - from: resources/fat
+    to: fat
+
+  # Master application icon used by BrowserWindow / Tray at runtime.
+  #
+  # Packaged location:
+  #   process.resourcesPath/icon.png
+  - from: resources/icon.png
+    to: icon.png
+
 
 win:
-  executableName: AI-Desktop-Character
+  executableName: F.A.T
+
+  # Master source icon for the Windows executable / installer.
+  icon: resources/icon.png
+
   target:
     - nsis
 
+
 nsis:
-  artifactName: AI-Desktop-Character-${version}-Setup.${ext}
+  artifactName: F.A.T-${version}-Setup.${ext}
 
-  shortcutName: AI Desktop Character
+  shortcutName: F.A.T
 
-  uninstallDisplayName: AI Desktop Character
+  uninstallDisplayName: F.A.T
 
   createDesktopShortcut: always
 
@@ -34,6 +63,8 @@ nsis:
 
 
 mac:
+  icon: resources/icon.png
+
   entitlementsInherit: build/entitlements.mac.plist
 
   extendInfo:
@@ -46,10 +77,12 @@ mac:
 
 
 dmg:
-  artifactName: AI-Desktop-Character-${version}.${ext}
+  artifactName: F.A.T-${version}.${ext}
 
 
 linux:
+  icon: resources/icon.png
+
   target:
     - AppImage
     - deb
@@ -60,7 +93,7 @@ linux:
 
 
 appImage:
-  artifactName: AI-Desktop-Character-${version}.${ext}
+  artifactName: F.A.T-${version}.${ext}
 
 
 npmRebuild: false
