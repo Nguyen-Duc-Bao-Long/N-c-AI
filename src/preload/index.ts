@@ -10,6 +10,20 @@ import {
 
 /*
   ============================================================
+  F.A.T RESOURCE API TYPES
+  ============================================================
+*/
+
+type FatResourceKind =
+  | 'character'
+  | 'visual'
+  | 'brain'
+  | 'stt'
+  | 'tts'
+
+
+/*
+  ============================================================
   APP API
   ============================================================
 */
@@ -212,6 +226,70 @@ const api = {
 
 /*
   ============================================================
+  F.A.T API
+  ============================================================
+
+  Legacy API:
+    window.api
+
+  Resource System API:
+    window.fat.resources
+*/
+
+
+const fat = {
+  resources: {
+    list:
+      (
+        kind?:
+          FatResourceKind
+      ) =>
+        ipcRenderer.invoke(
+          'fat:resources:list',
+          kind
+        ),
+
+
+    get:
+      (
+        kind:
+          FatResourceKind,
+
+        id:
+          string
+      ) =>
+        ipcRenderer.invoke(
+          'fat:resources:get',
+          kind,
+          id
+        ),
+
+
+    snapshot:
+      () =>
+        ipcRenderer.invoke(
+          'fat:resources:snapshot'
+        ),
+
+
+    getDefaults:
+      () =>
+        ipcRenderer.invoke(
+          'fat:resources:get-defaults'
+        ),
+
+
+    getStatus:
+      () =>
+        ipcRenderer.invoke(
+          'fat:resources:get-status'
+        )
+  }
+}
+
+
+/*
+  ============================================================
   EXPOSE API
   ============================================================
 */
@@ -240,6 +318,17 @@ if (
         'api',
         api
       )
+
+
+    /*
+      F.A.T Resource API.
+    */
+
+    contextBridge
+      .exposeInMainWorld(
+        'fat',
+        fat
+      )
   }
   catch (error) {
     console.error(
@@ -262,4 +351,9 @@ else {
   // @ts-ignore
   window.api =
     api
+
+
+  // @ts-ignore
+  window.fat =
+    fat
 }

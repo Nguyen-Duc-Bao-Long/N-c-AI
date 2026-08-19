@@ -222,11 +222,16 @@ type CubismCoreModelAdapter = {
       weight?: number
     ) => void
 
+  getPartOpacityByIndex:
+  (
+    index: number
+  ) => number
+
   setPartOpacityByIndex:
-    (
-      index: number,
-      opacity: number
-    ) => void
+  (
+    index: number,
+    opacity: number
+  ) => void
 }
 
 
@@ -236,6 +241,20 @@ type ModelResizeCorner =
   | 'sw'
   | 'se'
 
+
+type SmoothActionTransition = {
+  startedAt: number
+
+  durationMs: number
+
+  /*
+    Giá trị model đang hiển thị
+    ngay trước khi transition bắt đầu.
+
+    null = sẽ lấy baseline ở frame đầu tiên.
+  */
+  startValue: number | null
+}
 
 type ModelResizeState = {
   pointerId: number
@@ -268,6 +287,23 @@ type ModelResizeState = {
   SETTINGS
   ============================================================
 */
+
+/*
+  ============================================================
+  ACTION SMOOTH TRANSITION
+  ============================================================
+
+  500ms tương đương FadeSecondsAmount = 0.5
+  thường dùng trong VTube Studio.
+
+  Đây KHÔNG phải delay.
+
+  Action vẫn bắt đầu ngay lập tức,
+  nhưng ảnh hưởng của action sẽ tăng dần
+  từ trạng thái hiện tại -> action mới.
+*/
+const ACTION_TRANSITION_MS =
+  500
 
 /*
   Scale nhỏ nhất.
@@ -490,6 +526,355 @@ const expressionActionController =
   new ExpressionActionController()
 
 
+/*
+  ============================================================
+  SMOOTH ACTION TRANSITION STATE
+  ============================================================
+
+  Controller hiện tại tính ra TARGET cuối cùng.
+
+  Layer này chỉ chịu trách nhiệm:
+
+      trạng thái hiện tại
+              ↓
+         smooth 500ms
+              ↓
+        target action
+
+  Nhờ vậy ta KHÔNG phá:
+    - MultiAction
+    - motion3 duration
+    - expression toggle
+    - Idle
+    - Pose
+    - physics
+    - focus
+*/
+
+const runtimeActionById =
+  new Map<
+    string,
+    Live2DAction
+  >()
+
+
+const parameterTransitions =
+  new Map<
+    string,
+    SmoothActionTransition
+  >()
+
+
+const partOpacityTransitions =
+  new Map<
+    string,
+    SmoothActionTransition
+  >()
+
+
+/*
+  Giá trị thực tế mà custom action
+  đã ghi ra frame trước.
+
+  Cần cache lại vì frame tiếp theo
+  Cubism sẽ chạy Idle / physics / focus
+  trước applyMultiActionFrame().
+*/
+const lastAppliedParameterValues =
+  new Map<
+    string,
+    number
+  >()
+
+
+const lastAppliedPartOpacityValues =
+  new Map<
+    string,
+    number
+  >()
+
+
+/*
+  Dùng để phát hiện:
+
+    action vừa bật
+    action vừa tắt
+    oneshot vừa kết thúc
+*/
+const previousActiveActionIds =
+  new Set<string>()
+
+
+function easeActionTransition(
+  value: number
+): number {
+  const t =
+    clamp(
+      value,
+      0,
+      1
+    )
+
+
+  /*
+    Smoothstep.
+
+    Đầu và cuối transition
+    đều mềm hơn linear.
+  */
+  return (
+    t *
+    t *
+    (
+      3 -
+      2 * t
+    )
+  )
+}
+
+
+function clearSmoothActionRuntime():
+  void {
+  runtimeActionById.clear()
+
+
+  parameterTransitions.clear()
+
+
+  partOpacityTransitions.clear()
+
+
+  lastAppliedParameterValues.clear()
+
+
+  lastAppliedPartOpacityValues.clear()
+
+
+  previousActiveActionIds.clear()
+}
+
+
+function startSmoothTransitionForAction(
+  actionId: string
+): void {
+  const action =
+    runtimeActionById.get(
+      actionId
+    )
+
+
+  if (!action) {
+    return
+  }
+
+
+  /*
+    metadata là optional trong Live2DAction type.
+
+    Một số fallback/native action có thể không có metadata,
+    vì vậy không được truy cập trực tiếp:
+
+      action.metadata.parameterIds
+
+    nếu chưa kiểm tra.
+  */
+
+  const metadata =
+    action.metadata
+
+
+  if (!metadata) {
+    return
+  }
+
+
+  const parameterIds =
+    metadata.parameterIds ??
+    []
+
+
+  const partOpacityIds =
+    metadata.partOpacityIds ??
+    []
+
+
+  const now =
+    performance.now()
+
+
+  parameterIds.forEach(
+    id => {
+      parameterTransitions.set(
+        id,
+        {
+          startedAt:
+            now,
+
+          durationMs:
+            ACTION_TRANSITION_MS,
+
+          /*
+            Nếu parameter đang do một action khác
+            điều khiển thì bắt đầu từ giá trị
+            đang hiển thị hiện tại.
+
+            Nếu chưa từng có action custom
+            thì frame đầu tiên sẽ lấy Idle baseline.
+          */
+          startValue:
+            lastAppliedParameterValues
+              .get(
+                id
+              ) ??
+            null
+        }
+      )
+    }
+  )
+
+
+  partOpacityIds.forEach(
+    id => {
+      partOpacityTransitions.set(
+        id,
+        {
+          startedAt:
+            now,
+
+          durationMs:
+            ACTION_TRANSITION_MS,
+
+          startValue:
+            lastAppliedPartOpacityValues
+              .get(
+                id
+              ) ??
+            null
+        }
+      )
+    }
+  )
+}
+
+
+function resolveSmoothActionValue(
+  id: string,
+
+  baselineValue: number,
+
+  targetValue: number,
+
+  transitions:
+    Map<
+      string,
+      SmoothActionTransition
+    >,
+
+  lastAppliedValues:
+    Map<
+      string,
+      number
+    >,
+
+  now: number
+): number {
+  const transition =
+    transitions.get(
+      id
+    )
+
+
+  /*
+    Không có transition
+    -> controller được quyền ghi target
+    trực tiếp như behavior cũ.
+  */
+  if (!transition) {
+    lastAppliedValues.set(
+      id,
+      targetValue
+    )
+
+
+    return targetValue
+  }
+
+
+  if (
+    transition.startValue ===
+      null
+  ) {
+    transition.startValue =
+      lastAppliedValues.get(
+        id
+      ) ??
+      baselineValue
+  }
+
+
+  const duration =
+    Math.max(
+      1,
+      transition.durationMs
+    )
+
+
+  const progress =
+    (
+      now -
+      transition.startedAt
+    ) /
+    duration
+
+
+  if (
+    progress >=
+      1
+  ) {
+    transitions.delete(
+      id
+    )
+
+
+    lastAppliedValues.set(
+      id,
+      targetValue
+    )
+
+
+    return targetValue
+  }
+
+
+  const weight =
+    easeActionTransition(
+      progress
+    )
+
+
+  const startValue =
+    transition.startValue
+
+
+  const value =
+    startValue +
+    (
+      targetValue -
+      startValue
+    ) *
+    weight
+
+
+  lastAppliedValues.set(
+    id,
+    value
+  )
+
+
+  return value
+}
+
+
 const parameterIndexById =
   new Map<
     string,
@@ -529,28 +914,113 @@ function getCombinedActionState():
 }
 
 
-function emitCombinedActionState():
+function handleControllerActionStateChange():
   void {
+  const state =
+    getCombinedActionState()
+
+
+  const nextActiveActionIds =
+    new Set<string>([
+      ...state.activeToggleActionIds,
+
+      ...state.activeOneshotActionIds
+    ])
+
+
+  /*
+    ==========================================================
+    ACTION VỪA BẬT
+    ==========================================================
+
+    Ví dụ:
+
+      Idle
+        ->
+      Wave
+
+    Wave sẽ fade-in thay vì snap.
+  */
+
+  nextActiveActionIds.forEach(
+    actionId => {
+      if (
+        previousActiveActionIds.has(
+          actionId
+        )
+      ) {
+        return
+      }
+
+
+      startSmoothTransitionForAction(
+        actionId
+      )
+    }
+  )
+
+
+  /*
+    ==========================================================
+    ACTION VỪA TẮT / ONESHOT VỪA KẾT THÚC
+    ==========================================================
+
+    Ví dụ:
+
+      Wave
+        ->
+      Idle
+
+    cũng smooth 500ms,
+    không snap trở về Idle.
+  */
+
+  previousActiveActionIds.forEach(
+    actionId => {
+      if (
+        nextActiveActionIds.has(
+          actionId
+        )
+      ) {
+        return
+      }
+
+
+      startSmoothTransitionForAction(
+        actionId
+      )
+    }
+  )
+
+
+  previousActiveActionIds.clear()
+
+
+  nextActiveActionIds.forEach(
+    actionId => {
+      previousActiveActionIds.add(
+        actionId
+      )
+    }
+  )
+
+
   emit(
     'actionStateChange',
-    getCombinedActionState()
+    state
   )
 }
 
 
 const stopMultiActionStateSubscription =
   multiActionController.subscribe(
-    () => {
-      emitCombinedActionState()
-    }
+    handleControllerActionStateChange
   )
 
 
 const stopExpressionActionStateSubscription =
   expressionActionController.subscribe(
-    () => {
-      emitCombinedActionState()
-    }
+    handleControllerActionStateChange
   )
 
 
@@ -2843,6 +3313,25 @@ function applyMultiActionFrame(
   }
 
 
+  /*
+    ==========================================================
+    CONTROLLER TARGET
+    ==========================================================
+
+    Controller vẫn làm nhiệm vụ cũ:
+
+      - evaluate motion3 theo thời gian
+      - merge MultiAction
+      - tạo expression operations
+
+    Nhưng ta KHÔNG ghi chúng thẳng
+    vào Cubism nữa.
+
+    Ta tạo một "target frame" trước,
+    sau đó blend từ trạng thái hiện tại
+    sang target.
+  */
+
   const frame =
     multiActionController.getFrame()
 
@@ -2867,9 +3356,17 @@ function applyMultiActionFrame(
       0
 
 
+  const hasActiveTransition =
+    parameterTransitions.size >
+      0 ||
+    partOpacityTransitions.size >
+      0
+
+
   if (
     !hasMotionValues &&
-    !hasExpressionValues
+    !hasExpressionValues &&
+    !hasActiveTransition
   ) {
     return
   }
@@ -2881,6 +3378,35 @@ function applyMultiActionFrame(
       .coreModel as unknown as CubismCoreModelAdapter
 
 
+  const now =
+    performance.now()
+
+
+  /*
+    ==========================================================
+    BUILD PARAMETER TARGET
+    ==========================================================
+
+    Thứ tự vẫn giống code cũ:
+
+      1. motion
+      2. expression
+
+    Vì vậy behavior MultiAction cũ
+    vẫn được giữ nguyên.
+  */
+
+  const targetParameterValues =
+    new Map<
+      string,
+      number
+    >()
+
+
+  /*
+    MOTION TARGET.
+  */
+
   Object.entries(
     frame.parameters
   ).forEach(
@@ -2888,58 +3414,46 @@ function applyMultiActionFrame(
       id,
       value
     ]) => {
-      const index =
-        parameterIndexById.get(
-          id
-        )
-
-
       if (
-        index ===
-        undefined
+        !Number.isFinite(
+          value
+        )
       ) {
         return
       }
 
 
-      coreModel
-        .setParameterValueByIndex(
-          index,
-          value
-        )
+      targetParameterValues.set(
+        id,
+        value
+      )
     }
   )
 
 
   /*
     ==========================================================
-    MULTI EXPRESSION
+    EXPRESSION TARGET
     ==========================================================
 
-    Apply từng operation đúng thứ tự bật action.
+    Không apply thẳng Add / Multiply /
+    Overwrite vào Cubism nữa.
 
-    Ví dụ:
-      Wave L  -> Add ParamArmL
-      Wave R  -> Add ParamArmR
-      Tail Up -> Add ParamTail
-
-    Cả ba cùng tồn tại vì chúng được apply trên cùng
-    native motion baseline trong mỗi frame.
-
-    Nếu hai expression cùng chạm một parameter:
-      action bật sau được apply sau.
-
-    Blend vẫn giữ đúng theo exp3.json:
-      Add / Multiply / Overwrite.
+    Ta tính kết quả cuối trước,
+    sau đó mới smooth.
   */
 
   expressionFrame
     .operations
     .forEach(
       operation => {
+        const id =
+          operation.parameterId
+
+
         const index =
           parameterIndexById.get(
-            operation.parameterId
+            id
           )
 
 
@@ -2951,85 +3465,219 @@ function applyMultiActionFrame(
         }
 
 
+        const currentValue =
+          targetParameterValues.has(
+            id
+          )
+            ? (
+                targetParameterValues.get(
+                  id
+                ) as number
+              )
+            : coreModel
+                .getParameterValueByIndex(
+                  index
+                )
+
+
+        let nextValue =
+          currentValue
+
+
         if (
           operation.blend ===
           'Multiply'
         ) {
-          if (
-            coreModel.multiplyParameterValueByIndex
-          ) {
-            coreModel.multiplyParameterValueByIndex(
-              index,
-              operation.value
-            )
-          }
-          else {
-            coreModel.setParameterValueByIndex(
-              index,
-              coreModel.getParameterValueByIndex(
-                index
-              ) * operation.value
-            )
-          }
-
-
-          return
+          nextValue =
+            currentValue *
+            operation.value
         }
-
-
-        if (
+        else if (
           operation.blend ===
           'Overwrite'
         ) {
-          coreModel.setParameterValueByIndex(
-            index,
+          nextValue =
             operation.value
-          )
-
-
-          return
-        }
-
-
-        if (
-          coreModel.addParameterValueByIndex
-        ) {
-          coreModel.addParameterValueByIndex(
-            index,
-            operation.value
-          )
         }
         else {
-          coreModel.setParameterValueByIndex(
-            index,
-            coreModel.getParameterValueByIndex(
-              index
-            ) + operation.value
-          )
+          /*
+            Add.
+          */
+
+          nextValue =
+            currentValue +
+            operation.value
         }
+
+
+        targetParameterValues.set(
+          id,
+          nextValue
+        )
       }
     )
 
 
   /*
-    QUAN TRỌNG - giữ nguyên Hiyori/Pose fix:
+    ==========================================================
+    APPLY SMOOTH PARAMETERS
+    ==========================================================
+  */
 
-    Khi model có Pose, code cũ đã đặt:
+  const parameterIdsToApply =
+    new Set<string>([
+      ...targetParameterValues.keys(),
 
-      config.cubism4.setOpacityFromMotion = false
+      ...parameterTransitions.keys()
+    ])
 
-    để motion không tranh PartOpacity với Pose.
 
-    MultiAction phải tuân thủ cùng nguyên tắc.
-    Vì vậy model có Pose sẽ không bị controller
-    ghi PartOpacity trực tiếp.
+  parameterIdsToApply.forEach(
+    id => {
+      const index =
+        parameterIndexById.get(
+          id
+        )
+
+
+      if (
+        index ===
+        undefined
+      ) {
+        parameterTransitions.delete(
+          id
+        )
+
+
+        lastAppliedParameterValues.delete(
+          id
+        )
+
+
+        return
+      }
+
+
+      /*
+        Đây là giá trị sau khi:
+
+          Idle
+          focus
+          physics
+          pose
+          native motion
+
+        đã chạy trong frame hiện tại.
+
+        Nó chính là baseline.
+      */
+
+      const baselineValue =
+        coreModel
+          .getParameterValueByIndex(
+            index
+          )
+
+
+      /*
+        Nếu action đã kết thúc thì
+        target không còn trong Map.
+
+        Khi đó target = baseline.
+
+        Nhờ vậy action FADE OUT
+        về Idle thay vì snap.
+      */
+
+      const targetValue =
+        targetParameterValues.get(
+          id
+        ) ??
+        baselineValue
+
+
+      const outputValue =
+        resolveSmoothActionValue(
+          id,
+
+          baselineValue,
+
+          targetValue,
+
+          parameterTransitions,
+
+          lastAppliedParameterValues,
+
+          now
+        )
+
+
+      coreModel
+        .setParameterValueByIndex(
+          index,
+          outputValue
+        )
+
+
+      /*
+        Transition fade-out đã hoàn tất
+        và parameter không còn action nào dùng.
+
+        Không cần cache nữa.
+      */
+
+      if (
+        !targetParameterValues.has(
+          id
+        ) &&
+        !parameterTransitions.has(
+          id
+        )
+      ) {
+        lastAppliedParameterValues.delete(
+          id
+        )
+      }
+    }
+  )
+
+
+  /*
+    ==========================================================
+    POSE PROTECTION
+    ==========================================================
+
+    Giữ nguyên fix Hiyori.
+
+    Model có Pose:
+      KHÔNG cho custom action
+      tranh PartOpacity với Pose.
   */
 
   if (
     currentModelHasPose
   ) {
+    partOpacityTransitions.clear()
+
+
+    lastAppliedPartOpacityValues.clear()
+
+
     return
   }
+
+
+  /*
+    ==========================================================
+    PART OPACITY TARGET
+    ==========================================================
+  */
+
+  const targetPartOpacityValues =
+    new Map<
+      string,
+      number
+    >()
 
 
   Object.entries(
@@ -3039,6 +3687,37 @@ function applyMultiActionFrame(
       id,
       value
     ]) => {
+      if (
+        !Number.isFinite(
+          value
+        )
+      ) {
+        return
+      }
+
+
+      targetPartOpacityValues.set(
+        id,
+        clamp(
+          value,
+          0,
+          1
+        )
+      )
+    }
+  )
+
+
+  const partOpacityIdsToApply =
+    new Set<string>([
+      ...targetPartOpacityValues.keys(),
+
+      ...partOpacityTransitions.keys()
+    ])
+
+
+  partOpacityIdsToApply.forEach(
+    id => {
       const index =
         partIndexById.get(
           id
@@ -3049,19 +3728,73 @@ function applyMultiActionFrame(
         index ===
         undefined
       ) {
+        partOpacityTransitions.delete(
+          id
+        )
+
+
+        lastAppliedPartOpacityValues.delete(
+          id
+        )
+
+
         return
       }
+
+
+      const baselineValue =
+        coreModel
+          .getPartOpacityByIndex(
+            index
+          )
+
+
+      const targetValue =
+        targetPartOpacityValues.get(
+          id
+        ) ??
+        baselineValue
+
+
+      const outputValue =
+        resolveSmoothActionValue(
+          id,
+
+          baselineValue,
+
+          targetValue,
+
+          partOpacityTransitions,
+
+          lastAppliedPartOpacityValues,
+
+          now
+        )
 
 
       coreModel
         .setPartOpacityByIndex(
           index,
           clamp(
-            value,
+            outputValue,
             0,
             1
           )
         )
+
+
+      if (
+        !targetPartOpacityValues.has(
+          id
+        ) &&
+        !partOpacityTransitions.has(
+          id
+        )
+      ) {
+        lastAppliedPartOpacityValues.delete(
+          id
+        )
+      }
     }
   )
 }
@@ -3339,6 +4072,19 @@ async function runAction(
         )
 
 
+      /*
+        Bắt đầu/restart transition ngay cả khi user click lại
+        chính action đang active.
+
+        Subscription phía trên vẫn xử lý trường hợp action
+        tự tắt hoặc oneshot kết thúc.
+      */
+
+      startSmoothTransitionForAction(
+        action.id
+      )
+
+
       console.log(
         `[MultiExpression] ${action.label}`,
         {
@@ -3399,10 +4145,90 @@ async function runAction(
       action.id
     )
   ) {
+    /*
+      ========================================================
+      EXCLUSIVE ONESHOT
+      ========================================================
+
+      Quy tắc:
+
+        motion3 = oneshot
+
+      Chỉ cho phép MỘT oneshot motion chạy tại một thời điểm.
+
+      Nếu A đang chạy và user bấm B:
+
+        A stop ngay
+        -> state của A bị remove
+        -> nút A tự tắt
+        -> B bắt đầu ngay
+
+      Expression (*.exp3.json) dùng controller riêng,
+      vì vậy các toggle expression đang bật KHÔNG bị ảnh hưởng.
+
+      Nếu user click lại chính action đang chạy,
+      không stopAll() ở đây để trigger() có thể restart action đó
+      theo behavior hiện tại của MultiActionController.
+    */
+
+    const currentMotionState =
+      multiActionController.getState()
+
+
+    const hasDifferentActiveOneshot =
+      currentMotionState
+        .activeOneshotActionIds
+        .some(
+          activeActionId =>
+            activeActionId !==
+            action.id
+        )
+
+
+    if (
+      hasDifferentActiveOneshot
+    ) {
+      /*
+        MultiActionController hiện chỉ quản lý motion3
+        và app đã ép toàn bộ motion3 thành oneshot.
+
+        Vì vậy stopAll() ở đây chính là:
+          stop action ngắn cũ trước khi chạy action mới.
+
+        Subscription sẽ emit state mới,
+        nên App.vue / ModelPicker sẽ tự bỏ active
+        khỏi nút action cũ.
+      */
+
+      multiActionController
+        .stopAll()
+    }
+
+
+    /*
+      Trigger action mới NGAY LẬP TỨC sau khi action cũ dừng.
+      Không có setTimeout / delay.
+    */
+
     const result =
       multiActionController.trigger(
         action.id
       )
+
+
+    /*
+      Luôn restart smooth transition khi click motion.
+
+      - A -> B:
+          B bắt đầu ngay, transition mềm từ pose hiện tại.
+
+      - click lại A:
+          restart transition dù activeActionIds có thể không đổi.
+    */
+
+    startSmoothTransitionForAction(
+      action.id
+    )
 
 
     if (
@@ -3732,6 +4558,18 @@ function fitCurrentModel():
 function unloadCurrentModel():
   void {
   /*
+    Xóa toàn bộ transition/action cache của model cũ.
+
+    Nếu không clear ở đây:
+      - transition cũ có thể leak sang model mới
+      - runtimeActionById giữ metadata của model cũ
+      - clearSmoothActionRuntime() bị báo unused
+  */
+
+  clearSmoothActionRuntime()
+
+
+  /*
     Không để action model cũ leak sang
     model mới.
   */
@@ -3904,6 +4742,35 @@ async function loadCharacter(
     ) {
       return
     }
+
+
+    /*
+      ========================================================
+      CACHE ACTION METADATA FOR SMOOTH TRANSITION
+      ========================================================
+
+      startSmoothTransitionForAction() cần biết mỗi action
+      đang tác động lên Parameter / PartOpacity nào.
+
+      Cache phải được tạo lại sau mỗi lần load character.
+    */
+
+    runtimeActionById.clear()
+
+
+    runtimeInfo
+      .actions
+      .forEach(
+        action => {
+          runtimeActionById.set(
+            action.id,
+            action
+          )
+        }
+      )
+
+
+    previousActiveActionIds.clear()
 
 
     /*

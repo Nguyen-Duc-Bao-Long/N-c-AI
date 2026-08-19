@@ -10,10 +10,10 @@ import reactFaceIcon
   from './assets/ui/react-face.svg'
 
 import switchModelIcon
-  from './assets/ui/switch-model.png'
+  from './assets/ui/switch-model.svg'
 
 import move4DirIcon
-  from './assets/ui/move-4dir.png'
+  from './assets/ui/move-4dir.svg'
 
 import Live2DStage
   from './features/live2d/components/Live2DStage.vue'
